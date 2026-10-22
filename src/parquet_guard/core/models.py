@@ -148,10 +148,22 @@ class FieldDefinition(BaseModel):
                 if self.timezone is None and m_ts.group(2):
                     self.timezone = m_ts.group(2).strip()
 
+        # Duration parameters: e.g. duration[s], duration[ms], duration[us], duration[ns]
+        if self.time_unit is None and t_str.lower().startswith("duration"):
+            m_dur = re.search(r"duration\[(s|ms|us|ns)\]", t_str, re.IGNORECASE)
+            if m_dur:
+                self.time_unit = m_dur.group(1).lower()
+
         return self
 
-    def find_duplicate_paths(self, prefix: str = "") -> List[str]:
+    def find_duplicate_paths(self, prefix: str = "", depth: int = 0, max_depth: int = 100) -> List[str]:
         """Recursively search for duplicate child field names within this field."""
+        if depth > max_depth:
+            curr_target = f"{prefix}.{self.name}" if prefix else self.name
+            raise ValueError(
+                f"Schema nesting depth exceeded maximum supported depth ({max_depth}) at '{curr_target}'"
+            )
+
         curr_path = f"{prefix}.{self.name}" if prefix else self.name
         dups: List[str] = []
         if self.children:
@@ -164,7 +176,9 @@ class FieldDefinition(BaseModel):
             for cd in sorted(list(child_dups)):
                 dups.append(f"{curr_path}.{cd}")
             for child in self.children:
-                dups.extend(child.find_duplicate_paths(prefix=curr_path))
+                dups.extend(
+                    child.find_duplicate_paths(prefix=curr_path, depth=depth + 1, max_depth=max_depth)
+                )
         return dups
 
     def __eq__(self, other: Any) -> bool:

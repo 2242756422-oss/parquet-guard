@@ -88,6 +88,9 @@ def arrow_field_to_definition(field: pa.Field) -> FieldDefinition:
             timezone = str(pa_type.tz)
     elif pa.types.is_duration(pa_type):
         time_unit = str(pa_type.unit)
+    elif pa.types.is_union(pa_type):
+        for i in range(pa_type.num_fields):
+            children.append(arrow_field_to_definition(pa_type.field(i)))
 
     return FieldDefinition(
         name=field.name,

@@ -1,0 +1,16 @@
+- id: parquet-guard-validate-contract
+  name: Parquet Guard Contract Validator
+  description: Validates Parquet Guard JSON schema contract files for correct syntax, schema version, and uniqueness.
+  entry: parquet-guard validate-contract
+  language: python
+  files: \.contract\.json$
+  types: [json]
+
+- id: parquet-guard-audit
+  name: Parquet Guard Dataset Audit
+  description: Audits Parquet fixture datasets against schema drift and contract violations.
+  entry: parquet-guard audit
+  language: python
+  files: \.parquet$
+  pass_filenames: false
+  args: ["tests/fixtures"]

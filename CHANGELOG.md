@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Incremental Audit Cache State Leakage**: Removed dataset-relative `is_divergent` flags from per-file cached manifests (`CachedFileInfo`). Consistency is now dynamically evaluated across the active set of files in the current audit, preventing stale divergence states when offending files are deleted or modified.
+- **Corrupted Cache Resilience & Auto-Recovery**: Guarded against corrupted, truncated, or incompatible JSON cache files on disk. `load_audit_cache()` safely falls back to a clean full audit without crashing, and `save_audit_cache()` atomically overwrites the cache with valid metadata.
+- **Portable Relative Cache Lookups**: Enabled dual-resolution cache key lookups supporting both absolute paths and dataset-relative paths, allowing cached audit manifests to remain valid across varying working directory prefixes or containerized CI mount points.
 - **Bracket-Aware Map Type Parsing**: Replaced naive comma regex in `_parse_map_params` with a bracket-depth aware parser that cleanly handles `keys_sorted` attributes and nested values (e.g. `map<string, list<int32>, keys_sorted>`), ensuring safe widening rules evaluate correctly.
 - **Decimal Scale Invariance**: Prohibited decimal scale shifts in `is_safe_widening` (enforcing `s_old == s_new`). In Parquet physical storage, values are stored as unscaled integers; scale modifications alter the numeric magnitude and are strictly breaking.
 - **PyArrow Container Fallbacks**: Added fallback to `value_type` on `FixedSizeListType` and `ListType` when `value_field` is absent across Arrow binding variants.
@@ -22,7 +24,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **SARIF 2.1.0 Rules & URLs**: Expanded `tool.driver.rules` in SARIF exports to cover all known error codes, and aligned repository URLs to `https://github.com/2242756422-oss/parquet-guard`.
 
 ### Added
-- **Adversarial & Metamorphic Test Suite**: Added `tests/test_adversarial_v020_alpha.py` verifying incremental cache resilience under file deletion, bracket-aware Map parsing, decimal scale preservation, contract error handling, and CLI SARIF export. Total automated test suite expanded to **70 tests (100% pass rate)**.
+- **Deep Arrow Type System Extensions**:
+  - Unsigned integer safe widening respecting bit-depth constraints (`uint8 -> uint16/32/64/int16/32/64/float32/64`, `uint16 -> uint32/64/int32/64/float32/64`, `uint32 -> uint64/int64/float64`, strictly forbidding `uint64 -> int64` and `uint64 -> float64`).
+  - Duration unit precision widening (`duration[s] -> duration[ms] -> duration[us] -> duration[ns]`).
+  - Union type child extraction (`dense_union`, `sparse_union`).
+  - Maximum recursion depth limit (`max_depth=100`) preventing `RecursionError` crashes on pathological or circular schemas.
+- **CI/CD & Developer Experience Integrations**:
+  - Reusable composite GitHub Action definition in `.github/actions/parquet-guard/action.yml`.
+  - Pre-commit hook configuration in `.pre-commit-hooks.yaml`.
+  - Standalone, executable end-to-end demonstration in `examples/quickstart_demo.py`.
+- **Adversarial & Metamorphic Test Suite**: Added `tests/test_adversarial_v020_alpha.py` and `tests/test_v020_alpha_hardening.py` verifying cache resilience, relative lookups, duration widening, unsigned overflow safety, wide schemas, and SARIF export. Total automated test suite expanded to **78 tests (100% pass rate)**.
 - **Deep Structural Type Equality**:
   - `FixedSizeList` list length verification (`list_size`). Structural size mismatches (e.g. vector embedding dimensions 512 vs 768) are classified as `BREAKING` with `CONTAINER_PARAM_CHANGED`.
   - `Dictionary` ordered flag tracking (`ordered`). Semantics mismatch triggers `BREAKING` in strict mode and `WARNING` in permissive mode (`ORDERED_FLAG_CHANGED`).

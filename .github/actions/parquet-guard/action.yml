@@ -1,0 +1,56 @@
+name: "Parquet Guard Schema Audit"
+description: "Zero-data-scan Parquet metadata schema audit, contract validation, and SARIF export for CI"
+author: "Parquet Guard Maintainers"
+
+inputs:
+  path:
+    description: "Target Parquet dataset directory or file path"
+    required: true
+    default: "."
+  contract:
+    description: "Path to golden schema contract JSON file (optional)"
+    required: false
+    default: ""
+  mode:
+    description: "Validation mode: 'strict' or 'permissive'"
+    required: false
+    default: "strict"
+  format:
+    description: "Output format: 'text', 'markdown', 'json', or 'sarif'"
+    required: false
+    default: "text"
+  sarif-file:
+    description: "Path to write SARIF report to (optional)"
+    required: false
+    default: "parquet-guard.sarif"
+  fail-on-warnings:
+    description: "Exit with non-zero status if non-breaking warnings or safe widening are detected"
+    required: false
+    default: "false"
+
+outputs:
+  verdict:
+    description: "Audit result verdict: VALID, DRIFTED, INCOMPATIBLE, or INSPECTION_ERROR"
+    value: ${{ steps.audit.outputs.verdict }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Run Parquet Guard Audit
+      id: audit
+      shell: bash
+      run: |
+        ARGS="audit '${{ inputs.path }}' --mode '${{ inputs.mode }}' --format '${{ inputs.format }}'"
+        if [ -n "${{ inputs.contract }}" ]; then
+          ARGS="$ARGS --contract '${{ inputs.contract }}'"
+        fi
+        if [ "${{ inputs.fail-on-warnings }}" = "true" ]; then
+          ARGS="$ARGS --fail-on-warnings"
+        fi
+
+        echo "Executing: parquet-guard $ARGS"
+        parquet-guard $ARGS
+
+        if [ "${{ inputs.format }}" = "sarif" ] && [ -n "${{ inputs.sarif-file }}" ]; then
+          parquet-guard audit '${{ inputs.path }}' --mode '${{ inputs.mode }}' --format sarif > '${{ inputs.sarif-file }}' || true
+        fi

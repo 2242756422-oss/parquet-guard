@@ -24,9 +24,9 @@ SAFE_WIDENINGS: Dict[str, Set[str]] = {
     "int16": {"int32", "int64", "float32", "float64", "double"},
     "int32": {"int64", "float64", "double"},
     # Unsigned integers
-    "uint8": {"uint16", "uint32", "uint64", "int16", "int32", "int64"},
-    "uint16": {"uint32", "uint64", "int32", "int64"},
-    "uint32": {"uint64", "int64"},
+    "uint8": {"uint16", "uint32", "uint64", "int16", "int32", "int64", "float32", "float64", "double"},
+    "uint16": {"uint32", "uint64", "int32", "int64", "float32", "float64", "double"},
+    "uint32": {"uint64", "int64", "float64", "double"},
     # Floating point
     "float": {"double", "float64"},
     "float32": {"float64", "double"},
@@ -41,6 +41,10 @@ SAFE_WIDENINGS: Dict[str, Set[str]] = {
     "time32[s]": {"time32[ms]", "time64[us]", "time64[ns]"},
     "time32[ms]": {"time64[us]", "time64[ns]"},
     "time64[us]": {"time64[ns]"},
+    # Durations
+    "duration[s]": {"duration[ms]", "duration[us]", "duration[ns]"},
+    "duration[ms]": {"duration[us]", "duration[ns]"},
+    "duration[us]": {"duration[ns]"},
 }
 
 
@@ -141,6 +145,17 @@ def is_safe_widening(old_type: str, new_type: str) -> bool:
                 return True
         return False
 
+    # 2b. Duration compatibility: safe precision widening s -> ms -> us -> ns
+    dur_m1 = re.match(r"^duration\[(s|ms|us|ns)\]$", norm_old)
+    dur_m2 = re.match(r"^duration\[(s|ms|us|ns)\]$", norm_new)
+    if dur_m1 and dur_m2:
+        units = ["s", "ms", "us", "ns"]
+        u1 = dur_m1.group(1)
+        u2 = dur_m2.group(1)
+        if units.index(u2) >= units.index(u1):
+            return True
+        return False
+
     # 3. Decimal compatibility
     dec_old = _parse_decimal_params(old_type)
     dec_new = _parse_decimal_params(new_type)
@@ -173,7 +188,17 @@ def is_safe_widening(old_type: str, new_type: str) -> bool:
     return False
 
 
-CONTAINER_KINDS = {"struct", "list", "large_list", "fixed_size_list", "map", "dictionary"}
+CONTAINER_KINDS = {
+    "struct",
+    "list",
+    "large_list",
+    "fixed_size_list",
+    "map",
+    "dictionary",
+    "union",
+    "dense_union",
+    "sparse_union",
+}
 
 
 def get_container_kind(type_str: str) -> Optional[str]:
@@ -191,6 +216,8 @@ def get_container_kind(type_str: str) -> Optional[str]:
         return "map"
     if norm.startswith("dictionary"):
         return "dictionary"
+    if norm.startswith("dense_union") or norm.startswith("sparse_union") or norm.startswith("union"):
+        return "union"
     return None
 
 
@@ -201,6 +228,8 @@ def analyze_compatibility(
     check_metadata: bool = True,
     check_field_order: bool = False,
     field_path: str = "",
+    depth: int = 0,
+    max_depth: int = 100,
 ) -> List[FieldDiff]:
     """Analyze discrepancies between two field definitions and return identified diffs.
 
@@ -211,9 +240,27 @@ def analyze_compatibility(
         check_metadata: Whether to check field metadata changes.
         check_field_order: Whether to enforce/report child field order in nested containers.
         field_path: Hierarchical field path for nested reporting (e.g. 'user.address.zip').
+        depth: Current schema nesting depth.
+        max_depth: Maximum supported schema nesting depth before aborting.
     """
     diffs: List[FieldDiff] = []
     curr_path = field_path if field_path else old_field.name
+
+    if depth > max_depth:
+        diffs.append(
+            FieldDiff(
+                field_name=curr_path,
+                field_path=curr_path,
+                change_type=ChangeType.TYPE_MISMATCH,
+                severity=Severity.BREAKING,
+                error_code=ErrorCode.TYPE_MISMATCH,
+                old_value=old_field.type,
+                new_value=new_field.type,
+                description=f"Field '{curr_path}' exceeded maximum schema recursion depth limit ({max_depth}).",
+                recommendation="Refactor deeply nested or cyclic schema structure.",
+            )
+        )
+        return diffs
 
     old_container = get_container_kind(old_field.type)
     new_container = get_container_kind(new_field.type)
@@ -579,6 +626,8 @@ def analyze_compatibility(
                     check_metadata=check_metadata,
                     check_field_order=check_field_order,
                     field_path=child_path,
+                    depth=depth + 1,
+                    max_depth=max_depth,
                 )
                 diffs.extend(child_diffs)
 
