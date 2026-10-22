@@ -1,4 +1,4 @@
-# Known limitations and verification status (v0.2.0 Alpha)
+# Known limitations and verification status (v0.3.0a1 Alpha)
 
 This document identifies risks to be checked before a stable release. It is not a claim that they were reproduced by the package creator in every environment.
 

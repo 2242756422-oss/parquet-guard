@@ -20,12 +20,23 @@ def test_cli_version() -> None:
 
 def test_cli_inspect(sample_parquet_file: Path) -> None:
     runner = CliRunner()
+    # 1. Text format
     result = runner.invoke(main, ["inspect", str(sample_parquet_file)])
     assert result.exit_code == 0
     assert "PARQUET FILE METADATA" in result.output
     assert "event_id" in result.output
     assert "user_id" in result.output
     assert "Rows" in result.output
+
+    # 2. JSON format
+    result_json = runner.invoke(main, ["inspect", str(sample_parquet_file), "--format", "json"])
+    assert result_json.exit_code == 0
+    import json
+
+    data = json.loads(result_json.output)
+    assert "file_metadata" in data
+    assert "schema_contract" in data
+    assert data["file_metadata"]["num_rows"] == 3
 
 
 def test_cli_init_contract_and_check(

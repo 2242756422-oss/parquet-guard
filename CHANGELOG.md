@@ -11,6 +11,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Native GitHub Action wrapper (`2242756422-oss/parquet-guard-action`).
 - Remote cloud storage streaming footer audit (AWS S3, Google Cloud Storage, Azure Blob).
 
+## [0.3.0a1] - 2026-10-23
+
+### Fixed
+- **Windows GitHub Actions CI Compatibility (PR #2)**:
+  - Resolved cross-platform test harness failure in `tests/test_action_integration.py` where unqualified `bash` invoked the Windows Subsystem for Linux (WSL) launcher (`C:\Windows\System32\bash.exe`) instead of Git for Windows Bash.
+  - Implemented `_find_bash_executable()` with multi-path resolution and `--version` string verification to guarantee Git Bash is used.
+  - Normalized Windows paths and temporary files in `.github/actions/parquet-guard/action.yml` using `cygpath -m` and forward slashes.
+  - Dynamically resolved Python interpreter (`python3` on POSIX, `python` fallback on Windows) to avoid Microsoft Store execution alias stubs.
+  - Achieved 100% CI pass rate across all 15 matrix jobs (Windows, macOS, Ubuntu on Python 3.9–3.13) + Lint + Build (17/17 jobs passing).
+- **CLI Inspect JSON Serialization**:
+  - Fixed `parquet-guard inspect --format json` which previously attempted to call `.model_dump()` on a dictionary payload instead of `json.dumps()`. Added regression test in `tests/test_cli.py`.
+
+### Added
+- **PyPI Trusted Publishing via OpenID Connect (OIDC)**:
+  - Implemented `.github/workflows/release.yml` with least-privilege token permissions (`id-token: write` scoped strictly to publish jobs) and protected GitHub environments (`pypi`, `testpypi`).
+  - Added maintainer guide in `docs/PUBLISHING.md` with instructions for configuring PyPI Trusted Publishers.
+- **Evidence-Grounded AI Schema Evolution Copilot (Alpha Prerelease)**:
+  - Integrated `explain`, `propose-migration`, `eval-ai`, and `agent_tools.py` into public package distribution.
+  - Verified 100% offline functionality with zero external network access and zero API keys required by default.
+  - Documented rigid trust boundaries: AI cannot override deterministic CI compatibility verdicts; zero row data leakage guarantee (only schema AST metadata is inspected); migration planning generates valid PyArrow code but does not mutate physical partition files without operator execution.
+
 ## [0.2.0-alpha] - 2026-10-22
 
 ### Fixed

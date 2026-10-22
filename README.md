@@ -1,13 +1,13 @@
 # 🛡️ parquet-guard
 
 [![CI](https://github.com/2242756422-oss/parquet-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/2242756422-oss/parquet-guard/actions)
-[![PyPI version](https://img.shields.io/badge/pypi-v0.2.0--alpha-blue.svg)](https://pypi.org/project/parquet-guard/)
+[![PyPI version](https://img.shields.io/badge/pypi-v0.3.0a1-blue.svg)](https://pypi.org/project/parquet-guard/)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)](https://pypi.org/project/parquet-guard/)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-green.svg)](https://opensource.org/licenses/Apache-2.0)
 [![SARIF 2.1.0](https://img.shields.io/badge/SARIF-2.1.0%20Compliant-purple.svg)](https://docs.github.com/en/code-security/code-scanning)
 [![Zero Data Scan](https://img.shields.io/badge/I%2FO-Zero--Data--Scan-orange.svg)](#architecture)
 
-> **Alpha Release Notice**: `parquet-guard` is currently classified as **Alpha (`v0.2.0-alpha`)**. It is functionally verified with 104 automated tests, strict Ruff/Mypy type compliance, standard packaging, and reproducible AI evaluation benchmarks, but community adoption and long-term production hardening are ongoing.
+> **Alpha Prerelease Notice**: `parquet-guard` is currently classified as **Alpha (`v0.3.0a1`)**. It is functionally verified with 104 automated tests, strict Ruff/Mypy type compliance, standard packaging, reproducible AI evaluation benchmarks, and full cross-platform CI matrix support across Linux, macOS, and Windows. Community adoption and production hardening are ongoing.
 
 **High-performance, zero-data-scan Parquet schema contract & drift detection guard with experimental incremental caching and SARIF reporting for data pipelines, MLOps, and CI/CD.**
 
@@ -62,7 +62,7 @@ cd parquet-guard
 pip install .
 
 # Or install from built wheel artifact
-pip install dist/parquet_guard-0.2.0-py3-none-any.whl
+pip install dist/parquet_guard-0.3.0a1-py3-none-any.whl
 ```
 
 ---

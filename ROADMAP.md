@@ -4,7 +4,7 @@ This document tracks completed milestones, current Alpha capabilities, and plann
 
 ---
 
-## Current Status: v0.2.0 (Alpha)
+## Current Status: v0.3.0a1 (Alpha Prerelease)
 
 - [x] **Zero-Data-Scan Footer Inspection**: Pure metadata inspection reading trailing Parquet bytes via PyArrow without decoding data pages.
 - [x] **Declarative Golden Contracts**: JSON `SchemaContract` (v1.0) generation, round-trip serialization, and syntax validation (`init-contract`, `validate-contract`).
