@@ -60,9 +60,10 @@ python -m ruff check .
 python -m ruff format --check .
 ```
 
-CI configuration is provided under `.github/workflows/ci.yml`. Its presence does **not** mean a hosted GitHub Actions run has passed; inspect the Actions tab after publication.
+GitHub Actions runs tests, linting, and formatting checks on pushes and pull requests. See the [Actions tab](https://github.com/2242756422-oss/parquet-guard/actions) for the latest results.
 
-Bugs, reproduction cases, and feedback on the documented limitations are welcome through GitHub Issues after the repository becomes public. Please follow [CONTRIBUTING.md](CONTRIBUTING.md).
+
+Bugs, reproduction cases, and feedback on the documented limitations are welcome through GitHub Issues. Please follow [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Benchmarks and project scope
 
