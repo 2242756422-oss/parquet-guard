@@ -14,13 +14,118 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 
 ACTION_YML_PATH = Path(__file__).parent.parent / ".github" / "actions" / "parquet-guard" / "action.yml"
+
+
+def _find_bash_executable() -> str:
+    """Resolve the path to Bash executable, ensuring Git Bash (not WSL) on Windows."""
+    if sys.platform != "win32":
+        bash = shutil.which("bash")
+        if not bash:
+            raise RuntimeError("bash executable not found on POSIX system")
+        return bash
+
+    # On Windows: Check known Git for Windows locations first
+    candidates: list[Path] = []
+
+    # 1. Environment variables for Git
+    git_install_root = os.environ.get("GIT_INSTALL_ROOT")
+    if git_install_root:
+        candidates.extend(
+            [
+                Path(git_install_root) / "bin" / "bash.exe",
+                Path(git_install_root) / "usr" / "bin" / "bash.exe",
+            ]
+        )
+
+    # 2. Inspect git.exe location via PATH
+    git_cmd = shutil.which("git")
+    if git_cmd:
+        git_dir = Path(git_cmd).resolve().parent
+        candidates.extend(
+            [
+                git_dir.parent / "bin" / "bash.exe",
+                git_dir.parent / "usr" / "bin" / "bash.exe",
+                git_dir / "bash.exe",
+            ]
+        )
+
+    # 3. Standard Program Files locations on 64-bit and 32-bit Windows
+    for env_var in ["ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"]:
+        pf = os.environ.get(env_var)
+        if pf:
+            candidates.extend(
+                [
+                    Path(pf) / "Git" / "bin" / "bash.exe",
+                    Path(pf) / "Git" / "usr" / "bin" / "bash.exe",
+                ]
+            )
+
+    # 4. LocalAppData programs
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        candidates.extend(
+            [
+                Path(local_app_data) / "Programs" / "Git" / "bin" / "bash.exe",
+                Path(local_app_data) / "Programs" / "Git" / "usr" / "bin" / "bash.exe",
+            ]
+        )
+
+    # 5. Default fallback paths on Windows GitHub runners
+    candidates.extend(
+        [
+            Path("C:/Program Files/Git/bin/bash.exe"),
+            Path("C:/Program Files/Git/usr/bin/bash.exe"),
+            Path("C:/Program Files (x86)/Git/bin/bash.exe"),
+            Path("C:/Program Files (x86)/Git/usr/bin/bash.exe"),
+        ]
+    )
+
+    # Verify candidates - must be executable and report GNU bash
+    for cand in candidates:
+        if cand.is_file():
+            try:
+                res = subprocess.run(
+                    [str(cand), "--version"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if res.returncode == 0 and "GNU bash" in res.stdout:
+                    return str(cand)
+            except Exception:
+                continue
+
+    # 6. As last resort, inspect shutil.which("bash") but explicitly reject WSL
+    which_bash = shutil.which("bash")
+    if which_bash:
+        resolved = Path(which_bash).resolve()
+        resolved_str = str(resolved).lower()
+        if "system32" not in resolved_str and "syswow64" not in resolved_str and "wsl" not in resolved_str:
+            try:
+                res = subprocess.run(
+                    [str(resolved), "--version"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if res.returncode == 0 and "GNU bash" in res.stdout:
+                    return str(resolved)
+            except Exception:
+                pass
+
+    raise RuntimeError(
+        "Could not find Git for Windows Bash executable. "
+        "Standard Windows System32 bash (WSL launcher) cannot be used."
+    )
 
 
 def _extract_action_script() -> str:
@@ -45,13 +150,18 @@ def run_action_script(
     cwd: Path,
 ) -> subprocess.CompletedProcess[str]:
     """Execute the composite action's bash script with specified environment variables."""
+    bash_bin = _find_bash_executable()
     script = _extract_action_script()
     full_env = os.environ.copy()
     full_env.update(env_vars)
-    full_env["ACTION_PATH"] = str(ACTION_YML_PATH.parent)
+    full_env["ACTION_PATH"] = ACTION_YML_PATH.parent.as_posix()
+    full_env["PYTHON"] = Path(sys.executable).as_posix()
+
+    if "GITHUB_OUTPUT" in full_env and full_env["GITHUB_OUTPUT"]:
+        full_env["GITHUB_OUTPUT"] = Path(full_env["GITHUB_OUTPUT"]).as_posix()
 
     return subprocess.run(
-        ["bash", "-c", script],
+        [bash_bin, "-c", script],
         cwd=str(cwd),
         env=full_env,
         capture_output=True,
@@ -302,6 +412,14 @@ def test_action_script_input_validation_errors(tmp_path: Path):
 
 def test_action_script_install_false_when_cli_missing(tmp_path: Path):
     """Test that install=false exits with code 2 when parquet-guard is missing from PATH."""
+    bash_bin = _find_bash_executable()
+    if sys.platform == "win32":
+        # Keep Git bin/usr-bin so bash utilities run, but exclude Python Scripts
+        bash_dir = str(Path(bash_bin).parent)
+        restricted_path = f"{bash_dir};/usr/bin;/bin"
+    else:
+        restricted_path = "/usr/bin:/bin"
+
     env = {
         "INPUT_PATH": str(tmp_path),
         "INPUT_MODE": "strict",
@@ -311,7 +429,7 @@ def test_action_script_install_false_when_cli_missing(tmp_path: Path):
         "INPUT_INSTALL": "false",
         "INPUT_CONTRACT": "",
         "GITHUB_OUTPUT": "",
-        "PATH": "/usr/bin:/bin",  # Restrict PATH to exclude parquet-guard
+        "PATH": restricted_path,  # Restrict PATH to exclude parquet-guard
     }
     proc = run_action_script(env, tmp_path)
     assert proc.returncode == 2

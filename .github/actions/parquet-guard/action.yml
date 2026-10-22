@@ -99,24 +99,55 @@ runs:
             ;;
         esac
 
+        # Normalize Windows backslashes for path inputs and environment variables
+        INPUT_PATH="${INPUT_PATH//\\//}"
+        INPUT_CONTRACT="${INPUT_CONTRACT//\\//}"
+
+        if [ -n "$GITHUB_OUTPUT" ] && command -v cygpath >/dev/null 2>&1; then
+          GITHUB_OUTPUT="$(cygpath -m "$GITHUB_OUTPUT")"
+        elif [ -n "$GITHUB_OUTPUT" ]; then
+          GITHUB_OUTPUT="${GITHUB_OUTPUT//\\//}"
+        fi
+
+        if [ -n "$ACTION_PATH" ] && command -v cygpath >/dev/null 2>&1; then
+          ACTION_PATH="$(cygpath -m "$ACTION_PATH")"
+        elif [ -n "$ACTION_PATH" ]; then
+          ACTION_PATH="${ACTION_PATH//\\//}"
+        fi
+
+        # Resolve Python interpreter (python3 on POSIX, python fallback on Windows)
+        PYTHON_BIN="${PYTHON:-}"
+        if [ -z "$PYTHON_BIN" ]; then
+          if command -v python3 >/dev/null 2>&1 && python3 -c "import sys" >/dev/null 2>&1; then
+            PYTHON_BIN="python3"
+          elif command -v python >/dev/null 2>&1 && python -c "import sys" >/dev/null 2>&1; then
+            PYTHON_BIN="python"
+          else
+            PYTHON_BIN="python3"
+          fi
+        fi
+
         # 2. Prerequisite / Installation Check
         CLI_CMD="parquet-guard"
         REPO_ROOT="$(cd "$ACTION_PATH/../../.." && pwd)"
+        if command -v cygpath >/dev/null 2>&1; then
+          REPO_ROOT="$(cygpath -m "$REPO_ROOT")"
+        fi
 
         if [ "$INPUT_INSTALL" = "true" ]; then
           echo "Forced installation requested (install=true)..."
           if [ -f "$REPO_ROOT/pyproject.toml" ]; then
-            python3 -m pip install "$REPO_ROOT"
+            "$PYTHON_BIN" -m pip install "$REPO_ROOT"
           else
-            python3 -m pip install parquet-guard
+            "$PYTHON_BIN" -m pip install parquet-guard
           fi
         elif [ "$INPUT_INSTALL" = "auto" ]; then
           if ! command -v "$CLI_CMD" >/dev/null 2>&1; then
             echo "parquet-guard not found in PATH; installing (install=auto)..."
             if [ -f "$REPO_ROOT/pyproject.toml" ]; then
-              python3 -m pip install "$REPO_ROOT"
+              "$PYTHON_BIN" -m pip install "$REPO_ROOT"
             else
-              python3 -m pip install parquet-guard
+              "$PYTHON_BIN" -m pip install parquet-guard
             fi
           fi
         elif [ "$INPUT_INSTALL" = "false" ]; then
@@ -128,6 +159,9 @@ runs:
 
         # 3. Execute Audit and Capture Results into Temp JSON
         TMP_JSON="$(mktemp)"
+        if command -v cygpath >/dev/null 2>&1; then
+          TMP_JSON="$(cygpath -m "$TMP_JSON")"
+        fi
         export TMP_JSON
         trap 'rm -f "$TMP_JSON"' EXIT
 
@@ -141,7 +175,7 @@ runs:
         "$CLI_CMD" "${AUDIT_ARGS[@]}" >/dev/null 2>&1 || AUDIT_EXIT_CODE=$?
 
         # 4. Extract Verdict and Diagnostics (safely via os.environ)
-        VERDICT=$(python3 -c '
+        VERDICT=$("$PYTHON_BIN" -c '
         import json, os, sys
         path = os.environ.get("TMP_JSON")
         if path and os.path.isfile(path) and os.path.getsize(path) > 0:
@@ -164,7 +198,7 @@ runs:
         if [ "$INPUT_FORMAT" = "json" ]; then
           cat "$TMP_JSON"
         elif [ -f "$TMP_JSON" ] && [ -s "$TMP_JSON" ]; then
-          python3 -c '
+          "$PYTHON_BIN" -c '
         import json, os, sys
         from parquet_guard.core.models import PartitionAuditResult
         from parquet_guard.core.reporter import (
@@ -192,7 +226,7 @@ runs:
 
         # 6. Generate SARIF artifact if requested (safely via os.environ)
         if [ -n "$INPUT_SARIF_FILE" ] && [ -f "$TMP_JSON" ] && [ -s "$TMP_JSON" ]; then
-          python3 -c '
+          "$PYTHON_BIN" -c '
         import json, os, sys
         from pathlib import Path
         from parquet_guard.core.models import PartitionAuditResult
