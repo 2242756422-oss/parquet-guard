@@ -1,0 +1,39 @@
+==============================================================================
+ PARQUET-GUARD v0.2.0 FAIR & REPRODUCIBLE BENCHMARK
+==============================================================================
+ OS / Arch  : macOS-27.2-arm64-arm-64bit-Mach-O (arm64)
+ Python     : 3.13.9
+ PyArrow    : 21.0.0
+==============================================================================
+
+[1] Single File Inspection (10,000 rows, 7 columns, 30 repetitions)...
+    - PyArrow Raw C++ Footer (schema_arrow) : mean 0.052 ms [median 0.047, min 0.043, max 0.086, stdev 0.011]
+    - parquet-guard inspect_schema (AST)     : mean 0.083 ms [median 0.078, min 0.070, max 0.122, stdev 0.013]
+    - Full Data Scan (pq.read_table)        : mean 0.523 ms [median 0.505, min 0.475, max 0.687, stdev 0.047]
+    --> Python SchemaContract AST construction overhead: +0.031 ms over bare C++ footer read.
+    --> Note: Comparing metadata-only inspection against pq.read_table illustrates the architectural
+        difference between reading a ~10KB footer vs full payload ingestion; it is not a comparison against
+        other metadata-based schema validators.
+
+    *  10 partitions (2.39 MB total across disk):
+        parquet-guard Cold Run (I/O scan)       : 3.91 ms
+        parquet-guard Hot Full Audit (mean 15x) : 2.05 ms [median 2.03, stdev 0.17] (0.205 ms/part)
+        parquet-guard Incremental Audit (cached): 1.05 ms [median 1.00, stdev 0.18] (0.105 ms/part, 2.0x speedup vs hot full)
+        Manual Full Table Scan (pq.read_table)  : 5.39 ms [median 5.30, stdev 0.46] (0.54 ms/part)
+        Ratio vs Full Payload Scan              : 2.6x (hot full) / 5.1x (incremental)
+
+    *  50 partitions (12.01 MB total across disk):
+        parquet-guard Cold Run (I/O scan)       : 10.12 ms
+        parquet-guard Hot Full Audit (mean 15x) : 9.16 ms [median 9.14, stdev 0.16] (0.183 ms/part)
+        parquet-guard Incremental Audit (cached): 3.32 ms [median 3.30, stdev 0.08] (0.066 ms/part, 2.8x speedup vs hot full)
+        Manual Full Table Scan (pq.read_table)  : 25.30 ms [median 25.30, stdev 0.36] (0.51 ms/part)
+        Ratio vs Full Payload Scan              : 2.8x (hot full) / 7.6x (incremental)
+
+    * 100 partitions (24.04 MB total across disk):
+        parquet-guard Cold Run (I/O scan)       : 19.52 ms
+        parquet-guard Hot Full Audit (mean 15x) : 18.75 ms [median 18.71, stdev 0.19] (0.187 ms/part)
+        parquet-guard Incremental Audit (cached): 6.47 ms [median 6.03, stdev 1.25] (0.065 ms/part, 2.9x speedup vs hot full)
+        Manual Full Table Scan (pq.read_table)  : 50.59 ms [median 50.22, stdev 0.91] (0.51 ms/part)
+        Ratio vs Full Payload Scan              : 2.7x (hot full) / 7.8x (incremental)
+
+Benchmark completed successfully.

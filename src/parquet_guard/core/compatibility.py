@@ -119,6 +119,23 @@ def _parse_map_params(type_str: str) -> Optional[Tuple[str, str]]:
     return inner[:comma_pos].strip(), inner[comma_pos + 1 :].strip()
 
 
+def _is_temporal_widening(old_type: str, new_type: str) -> bool:
+    """Return True if transition is a timestamp or duration precision widening."""
+    ts_old = _parse_timestamp_params(old_type)
+    ts_new = _parse_timestamp_params(new_type)
+    if ts_old and ts_new:
+        return ts_old[0] != ts_new[0]
+
+    norm_old = _normalize_type_str(old_type)
+    norm_new = _normalize_type_str(new_type)
+    dur_m1 = re.match(r"^duration\[(s|ms|us|ns)\]$", norm_old)
+    dur_m2 = re.match(r"^duration\[(s|ms|us|ns)\]$", norm_new)
+    if dur_m1 and dur_m2:
+        return dur_m1.group(1) != dur_m2.group(1)
+
+    return False
+
+
 def is_safe_widening(old_type: str, new_type: str) -> bool:
     """Return True if transitioning from old_type to new_type is safely lossless."""
     norm_old = _normalize_type_str(old_type)
@@ -481,29 +498,86 @@ def analyze_compatibility(
             )
         elif _normalize_type_str(old_field.type) != _normalize_type_str(new_field.type):
             if is_safe_widening(old_field.type, new_field.type):
-                sev = Severity.BREAKING if mode == "strict" else Severity.SAFE
+                if _is_temporal_widening(old_field.type, new_field.type):
+                    # Temporal precision widening (e.g. s -> ms -> us -> ns):
+                    # Finer units restrict the dynamic range in int64. Zero-data-scan schema inspection
+                    # cannot guarantee value-level safety without reading raw data.
+                    # Strict mode: BREAKING; Permissive mode: WARNING with explicit overflow risk.
+                    sev = Severity.BREAKING if mode == "strict" else Severity.WARNING
+                    err_code = (
+                        ErrorCode.TYPE_WIDENED if mode == "strict" else ErrorCode.TEMPORAL_OVERFLOW_RISK
+                    )
+                    desc = (
+                        f"Field '{curr_path}' temporal precision widened from '{old_field.type}' to '{new_field.type}' "
+                        f"(type widening is strictly forbidden in strict mode)."
+                        if mode == "strict"
+                        else (
+                            f"Field '{curr_path}' temporal precision widened from '{old_field.type}' to '{new_field.type}'. "
+                            f"WARNING: Schema-only metadata validation cannot guarantee value-level safety without full data scan. "
+                            f"Finer units reduce the representable range in signed int64 (e.g. 'ns' timestamps overflow outside "
+                            f"1677-2262 AD, and 'ns' durations overflow beyond ±292 years). Downstream casting of out-of-range "
+                            f"values will fail with ArrowInvalid."
+                        )
+                    )
+                    rec = (
+                        f"Keep field type as '{old_field.type}' to satisfy strict schema contract."
+                        if mode == "strict"
+                        else (
+                            "Verify that all partition values reside strictly within the narrower dynamic range of the target "
+                            "temporal unit before promoting reader schemas, or retain the coarser unit in your contract."
+                        )
+                    )
+                    diffs.append(
+                        FieldDiff(
+                            field_name=curr_path,
+                            field_path=curr_path,
+                            change_type=ChangeType.TYPE_WIDENED,
+                            severity=sev,
+                            error_code=err_code,
+                            old_value=old_field.type,
+                            new_value=new_field.type,
+                            description=desc,
+                            recommendation=rec,
+                        )
+                    )
+                else:
+                    sev = Severity.BREAKING if mode == "strict" else Severity.SAFE
+                    diffs.append(
+                        FieldDiff(
+                            field_name=curr_path,
+                            field_path=curr_path,
+                            change_type=ChangeType.TYPE_WIDENED,
+                            severity=sev,
+                            error_code=ErrorCode.TYPE_WIDENED,
+                            old_value=old_field.type,
+                            new_value=new_field.type,
+                            description=(
+                                f"Field '{curr_path}' type changed from '{old_field.type}' to '{new_field.type}' "
+                                + (
+                                    "(type widening is strictly forbidden in strict mode)."
+                                    if mode == "strict"
+                                    else "(safely widened)."
+                                )
+                            ),
+                            recommendation=(
+                                f"Keep field type as '{old_field.type}' to satisfy strict schema contract."
+                                if mode == "strict"
+                                else "No action required. Downstream readers supporting promotion will read seamlessly."
+                            ),
+                        )
+                    )
+            elif is_safe_widening(new_field.type, old_field.type):
                 diffs.append(
                     FieldDiff(
                         field_name=curr_path,
                         field_path=curr_path,
-                        change_type=ChangeType.TYPE_WIDENED,
-                        severity=sev,
-                        error_code=ErrorCode.TYPE_WIDENED,
+                        change_type=ChangeType.TYPE_NARROWED,
+                        severity=Severity.BREAKING,
+                        error_code=ErrorCode.TYPE_NARROWED,
                         old_value=old_field.type,
                         new_value=new_field.type,
-                        description=(
-                            f"Field '{curr_path}' type changed from '{old_field.type}' to '{new_field.type}' "
-                            + (
-                                "(type widening is strictly forbidden in strict mode)."
-                                if mode == "strict"
-                                else "(safely widened)."
-                            )
-                        ),
-                        recommendation=(
-                            f"Keep field type as '{old_field.type}' to satisfy strict schema contract."
-                            if mode == "strict"
-                            else "No action required. Downstream readers supporting promotion will read seamlessly."
-                        ),
+                        description=f"Field '{curr_path}' type narrowed from '{old_field.type}' to '{new_field.type}'.",
+                        recommendation=f"Avoid narrowing type from '{old_field.type}' to '{new_field.type}' to prevent loss of precision or integer truncation.",
                     )
                 )
             else:
