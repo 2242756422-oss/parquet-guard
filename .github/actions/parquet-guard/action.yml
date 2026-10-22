@@ -57,15 +57,28 @@ runs:
         ACTION_PATH: ${{ github.action_path }}
       run: |
         # 1. Input Validation
-        if [ "$INPUT_MODE" != "strict" ] && [ "$INPUT_MODE" != "permissive" ]; then
-          echo "::error::Invalid mode: '$INPUT_MODE'. Allowed values are 'strict' or 'permissive'."
-          exit 2
-        fi
+        # Guard against workflow command / output injection via newline characters
+        for val in "$INPUT_PATH" "$INPUT_CONTRACT" "$INPUT_SARIF_FILE"; do
+          case "$val" in
+            *$'\n'*|*$'\r'*)
+              echo "::error::Input paths must not contain newline or carriage return characters."
+              exit 2
+              ;;
+          esac
+        done
+
+        case "$INPUT_MODE" in
+          strict|permissive) ;;
+          *)
+            echo "::error::Invalid mode. Allowed values are 'strict' or 'permissive'."
+            exit 2
+            ;;
+        esac
 
         case "$INPUT_FORMAT" in
           text|markdown|json|sarif) ;;
           *)
-            echo "::error::Invalid format: '$INPUT_FORMAT'. Allowed values are 'text', 'markdown', 'json', or 'sarif'."
+            echo "::error::Invalid format. Allowed values are 'text', 'markdown', 'json', or 'sarif'."
             exit 2
             ;;
         esac
@@ -73,7 +86,7 @@ runs:
         case "$INPUT_FAIL_ON_WARNINGS" in
           true|false) ;;
           *)
-            echo "::error::Invalid fail-on-warnings: '$INPUT_FAIL_ON_WARNINGS'. Allowed values are 'true' or 'false'."
+            echo "::error::Invalid fail-on-warnings. Allowed values are 'true' or 'false'."
             exit 2
             ;;
         esac
@@ -81,7 +94,7 @@ runs:
         case "$INPUT_INSTALL" in
           auto|true|false) ;;
           *)
-            echo "::error::Invalid install option: '$INPUT_INSTALL'. Allowed values are 'auto', 'true', or 'false'."
+            echo "::error::Invalid install option. Allowed values are 'auto', 'true', or 'false'."
             exit 2
             ;;
         esac

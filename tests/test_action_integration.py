@@ -287,6 +287,18 @@ def test_action_script_input_validation_errors(tmp_path: Path):
     e4 = dict(base_env, INPUT_INSTALL="pip_always")
     assert run_action_script(e4, tmp_path).returncode == 2
 
+    # 5. Newline injection attempt in INPUT_PATH
+    e5 = dict(base_env, INPUT_PATH="path\n::set-output name=pwn::true")
+    assert run_action_script(e5, tmp_path).returncode == 2
+
+    # 6. Newline injection attempt in INPUT_CONTRACT
+    e6 = dict(base_env, INPUT_CONTRACT="contract.json\r\n::workflow_command::")
+    assert run_action_script(e6, tmp_path).returncode == 2
+
+    # 7. Newline injection attempt in INPUT_SARIF_FILE
+    e7 = dict(base_env, INPUT_SARIF_FILE="out.sarif\nmalicious")
+    assert run_action_script(e7, tmp_path).returncode == 2
+
 
 def test_action_script_install_false_when_cli_missing(tmp_path: Path):
     """Test that install=false exits with code 2 when parquet-guard is missing from PATH."""
