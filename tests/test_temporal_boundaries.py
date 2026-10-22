@@ -40,12 +40,22 @@ def test_arrow_nanosecond_timestamp_physical_overflow_boundary():
     casted_valid = pc.cast(valid_ts, pa.timestamp("ns"))
     assert casted_valid[0].as_py() == datetime(2026, 10, 22, 12, 0, 0)
 
-    # 2. Future timestamp (2300 AD) overflows int64 nanoseconds and raises ArrowInvalid
+    # 2. Maximum representable timestamp in int64 nanoseconds: 2262-04-11 23:47:16 UTC
+    edge_inside_ts = pa.array([datetime(2262, 4, 11, 23, 47, 16)], type=pa.timestamp("s"))
+    casted_edge = pc.cast(edge_inside_ts, pa.timestamp("ns"))
+    assert casted_edge[0].as_py() == datetime(2262, 4, 11, 23, 47, 16)
+
+    # 3. Immediate boundary overflow: 2262-04-12 00:00:00 UTC exceeds int64 nanoseconds
+    edge_outside_ts = pa.array([datetime(2262, 4, 12, 0, 0, 0)], type=pa.timestamp("s"))
+    with pytest.raises(pa.ArrowInvalid, match="out of bounds timestamp"):
+        pc.cast(edge_outside_ts, pa.timestamp("ns"))
+
+    # 4. Distant future timestamp (2300 AD) overflows int64 nanoseconds and raises ArrowInvalid
     future_ts = pa.array([datetime(2300, 1, 1, 0, 0, 0)], type=pa.timestamp("s"))
     with pytest.raises(pa.ArrowInvalid, match="out of bounds timestamp"):
         pc.cast(future_ts, pa.timestamp("ns"))
 
-    # 3. Past timestamp (1500 AD) overflows int64 nanoseconds and raises ArrowInvalid
+    # 5. Distant past timestamp (1500 AD) overflows int64 nanoseconds and raises ArrowInvalid
     past_ts = pa.array([datetime(1500, 1, 1, 0, 0, 0)], type=pa.timestamp("s"))
     with pytest.raises(pa.ArrowInvalid, match="out of bounds timestamp"):
         pc.cast(past_ts, pa.timestamp("ns"))
@@ -58,7 +68,17 @@ def test_arrow_nanosecond_duration_physical_overflow_boundary():
     casted_dur = pc.cast(small_dur, pa.duration("ns"))
     assert casted_dur[0].as_py().total_seconds() == 10_000
 
-    # 2. Large duration (10 billion seconds = ~317 years) overflows int64 nanoseconds
+    # 2. Maximum representable duration in int64 nanoseconds: 9,223,372,036 seconds (~292.27 years)
+    edge_inside_dur = pa.array([9_223_372_036], type=pa.duration("s"))
+    casted_edge_dur = pc.cast(edge_inside_dur, pa.duration("ns"))
+    assert casted_edge_dur[0].as_py().total_seconds() == 9_223_372_036
+
+    # 3. Immediate boundary overflow: 9,223,372,037 seconds (> 2^63 - 1 nanoseconds)
+    edge_outside_dur = pa.array([9_223_372_037], type=pa.duration("s"))
+    with pytest.raises(pa.ArrowInvalid, match="out of bounds timestamp"):
+        pc.cast(edge_outside_dur, pa.duration("ns"))
+
+    # 4. Large duration (10 billion seconds = ~317 years) overflows int64 nanoseconds
     large_dur = pa.array([10_000_000_000], type=pa.duration("s"))
     with pytest.raises(pa.ArrowInvalid, match="out of bounds"):
         pc.cast(large_dur, pa.duration("ns"))

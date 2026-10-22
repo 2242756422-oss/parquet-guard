@@ -56,8 +56,6 @@ runs:
         INPUT_INSTALL: ${{ inputs.install }}
         ACTION_PATH: ${{ github.action_path }}
       run: |
-        set -eo pipefail
-
         # 1. Input Validation
         if [ "$INPUT_MODE" != "strict" ] && [ "$INPUT_MODE" != "permissive" ]; then
           echo "::error::Invalid mode: '$INPUT_MODE'. Allowed values are 'strict' or 'permissive'."
@@ -80,24 +78,44 @@ runs:
             ;;
         esac
 
+        case "$INPUT_INSTALL" in
+          auto|true|false) ;;
+          *)
+            echo "::error::Invalid install option: '$INPUT_INSTALL'. Allowed values are 'auto', 'true', or 'false'."
+            exit 2
+            ;;
+        esac
+
         # 2. Prerequisite / Installation Check
         CLI_CMD="parquet-guard"
-        if ! command -v "$CLI_CMD" >/dev/null 2>&1; then
-          if [ "$INPUT_INSTALL" != "false" ]; then
-            echo "parquet-guard not found in PATH; attempting installation..."
-            if [ -f "$ACTION_PATH/../../pyproject.toml" ]; then
-              python3 -m pip install "$ACTION_PATH/../.."
+        REPO_ROOT="$(cd "$ACTION_PATH/../../.." && pwd)"
+
+        if [ "$INPUT_INSTALL" = "true" ]; then
+          echo "Forced installation requested (install=true)..."
+          if [ -f "$REPO_ROOT/pyproject.toml" ]; then
+            python3 -m pip install "$REPO_ROOT"
+          else
+            python3 -m pip install parquet-guard
+          fi
+        elif [ "$INPUT_INSTALL" = "auto" ]; then
+          if ! command -v "$CLI_CMD" >/dev/null 2>&1; then
+            echo "parquet-guard not found in PATH; installing (install=auto)..."
+            if [ -f "$REPO_ROOT/pyproject.toml" ]; then
+              python3 -m pip install "$REPO_ROOT"
             else
               python3 -m pip install parquet-guard
             fi
-          else
+          fi
+        elif [ "$INPUT_INSTALL" = "false" ]; then
+          if ! command -v "$CLI_CMD" >/dev/null 2>&1; then
             echo "::error::parquet-guard executable not found and install=false."
             exit 2
           fi
         fi
 
-        # 3. Execute Audit and Capture Results
+        # 3. Execute Audit and Capture Results into Temp JSON
         TMP_JSON="$(mktemp)"
+        export TMP_JSON
         trap 'rm -f "$TMP_JSON"' EXIT
 
         AUDIT_ARGS=("audit" "$INPUT_PATH" "--mode" "$INPUT_MODE" "--format" "json" "--output" "$TMP_JSON")
@@ -109,58 +127,80 @@ runs:
         AUDIT_EXIT_CODE=0
         "$CLI_CMD" "${AUDIT_ARGS[@]}" >/dev/null 2>&1 || AUDIT_EXIT_CODE=$?
 
-        # 4. Extract Verdict and Diagnostics
-        VERDICT="INSPECTION_ERROR"
-        if [ -f "$TMP_JSON" ] && [ -s "$TMP_JSON" ]; then
-          VERDICT=$(python3 -c "import json; data=json.load(open('$TMP_JSON')); print(data.get('result_state', 'INSPECTION_ERROR'))" 2>/dev/null || echo "INSPECTION_ERROR")
-        fi
+        # 4. Extract Verdict and Diagnostics (safely via os.environ)
+        VERDICT=$(python3 -c '
+        import json, os, sys
+        path = os.environ.get("TMP_JSON")
+        if path and os.path.isfile(path) and os.path.getsize(path) > 0:
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                print(data.get("result_state", "INSPECTION_ERROR"))
+                sys.exit(0)
+            except Exception:
+                pass
+        print("INSPECTION_ERROR")
+        ' 2>/dev/null || echo "INSPECTION_ERROR")
 
         if [ -n "$GITHUB_OUTPUT" ]; then
           echo "verdict=$VERDICT" >> "$GITHUB_OUTPUT"
         fi
         echo "Audit Verdict: $VERDICT"
 
-        # 5. Output Console Presentation
+        # 5. Output Console Presentation (safely via os.environ)
         if [ "$INPUT_FORMAT" = "json" ]; then
           cat "$TMP_JSON"
-        elif [ "$INPUT_FORMAT" = "sarif" ]; then
-          python3 -c "
+        elif [ -f "$TMP_JSON" ] && [ -s "$TMP_JSON" ]; then
+          python3 -c '
+        import json, os, sys
         from parquet_guard.core.models import PartitionAuditResult
-        from parquet_guard.core.reporter import format_audit_sarif
-        import json
-        res = PartitionAuditResult.model_validate(json.load(open('$TMP_JSON')))
-        print(format_audit_sarif(res))
-        " 2>/dev/null || true
-        elif [ "$INPUT_FORMAT" = "markdown" ]; then
-          python3 -c "
-        from parquet_guard.core.models import PartitionAuditResult
-        from parquet_guard.core.reporter import format_audit_markdown
-        import json
-        res = PartitionAuditResult.model_validate(json.load(open('$TMP_JSON')))
-        print(format_audit_markdown(res))
-        " 2>/dev/null || true
-        else
-          python3 -c "
-        from parquet_guard.core.models import PartitionAuditResult
-        from parquet_guard.core.reporter import format_audit_terminal
-        import json
-        res = PartitionAuditResult.model_validate(json.load(open('$TMP_JSON')))
-        print(format_audit_terminal(res))
-        " 2>/dev/null || true
+        from parquet_guard.core.reporter import (
+            format_audit_markdown,
+            format_audit_sarif,
+            format_audit_terminal,
+        )
+
+        fmt = os.environ.get("INPUT_FORMAT", "text")
+        tmp_path = os.environ["TMP_JSON"]
+        try:
+            with open(tmp_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            res = PartitionAuditResult.model_validate(data)
+            if fmt == "sarif":
+                print(format_audit_sarif(res))
+            elif fmt == "markdown":
+                print(format_audit_markdown(res))
+            else:
+                print(format_audit_terminal(res))
+        except Exception as e:
+            print(f"Error rendering presentation: {e}", file=sys.stderr)
+        '
         fi
 
-        # 6. Generate SARIF artifact if requested
+        # 6. Generate SARIF artifact if requested (safely via os.environ)
         if [ -n "$INPUT_SARIF_FILE" ] && [ -f "$TMP_JSON" ] && [ -s "$TMP_JSON" ]; then
-          python3 -c "
+          python3 -c '
+        import json, os, sys
+        from pathlib import Path
         from parquet_guard.core.models import PartitionAuditResult
         from parquet_guard.core.reporter import format_audit_sarif
-        from pathlib import Path
-        import json
-        res = PartitionAuditResult.model_validate(json.load(open('$TMP_JSON')))
-        sarif_out = format_audit_sarif(res)
-        Path('$INPUT_SARIF_FILE').parent.mkdir(parents=True, exist_ok=True)
-        Path('$INPUT_SARIF_FILE').write_text(sarif_out, encoding='utf-8')
-        "
+
+        tmp_path = os.environ["TMP_JSON"]
+        sarif_target = os.environ["INPUT_SARIF_FILE"]
+
+        try:
+            with open(tmp_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            res = PartitionAuditResult.model_validate(data)
+            sarif_content = format_audit_sarif(res)
+
+            out_file = Path(sarif_target)
+            out_file.parent.mkdir(parents=True, exist_ok=True)
+            out_file.write_text(sarif_content, encoding="utf-8")
+        except Exception as e:
+            print(f"Error generating SARIF output: {e}", file=sys.stderr)
+            sys.exit(1)
+        '
           if [ -n "$GITHUB_OUTPUT" ]; then
             echo "sarif-file=$INPUT_SARIF_FILE" >> "$GITHUB_OUTPUT"
           fi

@@ -26,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **SARIF 2.1.0 Rules & URLs**: Expanded `tool.driver.rules` in SARIF exports to cover all known error codes (including `TEMPORAL_OVERFLOW_RISK`), and aligned repository URLs to `https://github.com/2242756422-oss/parquet-guard`.
 
 ### Added
-- **Temporal Boundary & Action Integration Test Suites**: Added `tests/test_temporal_boundaries.py` and `tests/test_action_integration.py` covering real PyArrow timestamp overflow boundaries (year 2300 `ArrowInvalid`), duration boundaries (~317 years `ArrowInvalid`), verdict extraction, and SARIF generation under failure. Total automated test suite expanded to **88 tests (100% pass rate)**.
+- **Temporal Boundary & Action Integration Test Suites**: Added `tests/test_temporal_boundaries.py` and `tests/test_action_integration.py` covering real PyArrow timestamp overflow boundaries (year 2300 `ArrowInvalid`), duration boundaries (~317 years `ArrowInvalid`), verdict extraction, and SARIF generation under failure. Total automated test suite expanded to **95 tests (100% pass rate)**.
 - **Deep Arrow Type System Extensions**:
   - Unsigned integer safe widening respecting bit-depth constraints (`uint8 -> uint16/32/64/int16/32/64/float32/64`, `uint16 -> uint32/64/int32/64/float32/64`, `uint32 -> uint64/int64/float64`, strictly forbidding `uint64 -> int64` and `uint64 -> float64`).
   - Duration unit precision widening (`duration[s] -> duration[ms] -> duration[us] -> duration[ns]`).

@@ -7,7 +7,7 @@
 [![SARIF 2.1.0](https://img.shields.io/badge/SARIF-2.1.0%20Compliant-purple.svg)](https://docs.github.com/en/code-security/code-scanning)
 [![Zero Data Scan](https://img.shields.io/badge/I%2FO-Zero--Data--Scan-orange.svg)](#architecture)
 
-> **Alpha Release Notice**: `parquet-guard` is currently classified as **Alpha (`v0.2.0-alpha`)**. It is functionally verified with 88 automated tests, strict Ruff/Mypy type compliance, and standard packaging, but community adoption and long-term production hardening are ongoing.
+> **Alpha Release Notice**: `parquet-guard` is currently classified as **Alpha (`v0.2.0-alpha`)**. It is functionally verified with 95 automated tests, strict Ruff/Mypy type compliance, and standard packaging, but community adoption and long-term production hardening are ongoing.
 
 **High-performance, zero-data-scan Parquet schema contract & drift detection guard with experimental incremental caching and SARIF reporting for data pipelines, MLOps, and CI/CD.**
 
@@ -24,7 +24,7 @@ In modern data engineering and AI training pipelines, Apache Parquet is the ubiq
 - A FixedSizeList length changes (e.g., embedding vector `fixed_size_list<float32>[512]` to `[768]`), causing matrix math kernels or tensor loaders to crash.
 - A Map's `keys_sorted` attribute changes or Dictionary `ordered` flag flips, breaking binary search optimizations in query engines.
 - A newly deployed worker writes a partitioned directory (`date=2026-10-22`) with an extra column, causing downstream federated queries across partitions to fail.
-- Existing validation tools (like Great Expectations or Soda) require **scanning entire gigabyte-scale datasets into memory**, making them too slow and expensive for pre-commit hooks and pull request CI.
+- Validating schemas via full data payload ingestion (`pq.read_table`) scales with total data volume, whereas `parquet-guard` inspects the 2KB–20KB Parquet footer without reading row data into memory.
 
 `parquet-guard` solves this by inspecting **only the Parquet metadata footer (typically 2KB–20KB)**. It performs comprehensive structural compatibility checks and multi-partition consistency audits in **sub-millisecond timeframes**.
 
@@ -213,18 +213,18 @@ Empirical measurements on macOS arm64 (Apple Silicon, Python 3.13.9, PyArrow 21.
 ### 1. Single File Schema Inspection (10,000 rows, 7 columns, 30 repetitions)
 | Method | Mean Latency | Median | Std Dev | Description |
 | :--- | :---: | :---: | :---: | :--- |
-| **PyArrow C++ Raw (`ParquetFile.schema_arrow`)** | **0.052 ms** | 0.047 ms | 0.011 ms | Bare C++ footer read |
-| **`parquet-guard inspect_schema`** (Pydantic AST) | **0.083 ms** | 0.078 ms | 0.013 ms | Footer read + Pydantic SchemaContract AST |
-| **Full Data Scan (`pq.read_table`)** | **0.523 ms** | 0.505 ms | 0.047 ms | Reads all columns & rows into memory |
+| **PyArrow C++ Raw (`ParquetFile.schema_arrow`)** | **0.058 ms** | 0.050 ms | 0.026 ms | Bare C++ footer read |
+| **`parquet-guard inspect_schema`** (Pydantic AST) | **0.087 ms** | 0.080 ms | 0.018 ms | Footer read + Pydantic SchemaContract AST |
+| **Full Data Scan (`pq.read_table`)** | **0.549 ms** | 0.524 ms | 0.067 ms | Reads all columns & rows into memory |
 
 *Note: Comparing metadata footer inspection with `pq.read_table` illustrates the architectural difference between metadata-only extraction (~10KB footer) and full-data payload ingestion; it is not an assertion of superiority over other metadata-based schema tools.*
 
 ### 2. Multi-Partition Dataset Auditing (`parquet-guard audit`, 15 repetitions)
 | Partitions | Total Size | Cold Run | Hot Full Audit (Mean) | Hot Incremental Audit | Full Payload Scan (`pq.read_table`) |
 | :---: | :---: | :---: | :---: | :---: | :---: |
-| **10 partitions** | 2.39 MB | 3.91 ms | **2.05 ms** (±0.17 ms) | **1.05 ms** (±0.18 ms) | 5.39 ms (±0.46 ms) |
-| **50 partitions** | 12.01 MB | 10.12 ms | **9.16 ms** (±0.16 ms) | **3.32 ms** (±0.08 ms) | 25.30 ms (±0.36 ms) |
-| **100 partitions** | 24.04 MB | 19.52 ms | **18.75 ms** (±0.19 ms) | **6.47 ms** (±1.25 ms) | 50.59 ms (±0.91 ms) |
+| **10 partitions** | 2.39 MB | 3.23 ms | **2.11 ms** (±0.14 ms) | **1.04 ms** (±0.13 ms) | 6.79 ms (±3.16 ms) |
+| **50 partitions** | 12.01 MB | 10.26 ms | **9.50 ms** (±0.10 ms) | **3.42 ms** (±0.17 ms) | 26.34 ms (±0.30 ms) |
+| **100 partitions** | 24.04 MB | 21.01 ms | **19.61 ms** (±0.50 ms) | **5.96 ms** (±0.20 ms) | 52.38 ms (±0.83 ms) |
 
 ### Architectural Insight: Footer I/O vs Full Data Scan
 - **Full Data Scan (`pq.read_table`)**: Reads dictionary pages, data pages, decompresses Snappy blocks, and constructs Arrow memory buffers. Scaling is $O(\text{Data Volume})$.
@@ -256,7 +256,7 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 
-# 3. Run automated test suite (88 tests, 100% passing)
+# 3. Run automated test suite (95 tests, 100% passing)
 pytest tests/ -v
 
 # 4. Run static type checking and linters

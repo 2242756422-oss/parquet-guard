@@ -137,7 +137,26 @@ def _is_temporal_widening(old_type: str, new_type: str) -> bool:
 
 
 def is_safe_widening(old_type: str, new_type: str) -> bool:
-    """Return True if transitioning from old_type to new_type is safely lossless."""
+    """Return True if transitioning from old_type to new_type is safely lossless.
+
+    API Contract Note:
+    `is_safe_widening` evaluates unidirectional algebraic type promotion (e.g.,
+    int32 -> int64, float32 -> float64, timestamp[s] -> timestamp[ns],
+    duration[s] -> duration[ns]). While finer temporal units algebraically increase
+    precision without truncation, physical signed int64 storage bounds their
+    representable time range:
+    - Nanosecond timestamps: 1677-09-21 to 2262-04-11 AD.
+    - Nanosecond durations: ±292.27 years (±9,223,372,036 seconds).
+
+    Because zero-data-scan schema inspection cannot verify individual row values
+    without reading the full Parquet payload, `analyze_compatibility` handles temporal
+    widening separately:
+    - In `strict` mode: temporal widening is rejected as `Severity.BREAKING`
+      (ErrorCode.TYPE_WIDENED).
+    - In `permissive` mode: temporal widening is flagged as `Severity.WARNING`
+      with `ErrorCode.TEMPORAL_OVERFLOW_RISK` and recommendations to verify the
+      dataset temporal bounds.
+    """
     norm_old = _normalize_type_str(old_type)
     norm_new = _normalize_type_str(new_type)
 

@@ -32,7 +32,7 @@ It prevents costly production data pipeline crashes and silent type truncations 
 
 | Existing Approach | Fatal Flaws |
 | :--- | :--- |
-| **Great Expectations / Soda** | Heavyweight, complex configuration, requires scanning full dataset rows into memory; too slow for high-frequency CI and pre-commit hooks. |
+| **Full-table data quality frameworks** | Focus on row-level business assertions and data payload ingestion; too resource-intensive for high-frequency, metadata-only schema drift gating in CI and pre-commit hooks. |
 | **Ad-hoc Python Scripts** | Hand-rolled 50-line scripts in every repo; lack standardized backward compatibility rules, cannot handle nested structs/lists, no Markdown PR reporting. |
 | **`parquet-linter` (Rust)** | Focuses exclusively on compression, page size, and dictionary layout efficiency; does not validate semantic schema compatibility or partitioned directories. |
 | **DuckDB / Polars Direct Read** | Fails *at runtime* inside downstream jobs rather than *at commit/PR time*; cryptic C++ error messages without actionable diffs. |
