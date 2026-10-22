@@ -1,5 +1,7 @@
 """Unit tests for dataset partition auditor."""
 
+from __future__ import annotations
+
 from pathlib import Path
 
 from parquet_guard.core.auditor import audit_dataset

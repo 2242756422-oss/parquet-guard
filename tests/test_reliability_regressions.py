@@ -8,6 +8,8 @@
 6. Nullability transitions across strict vs permissive modes.
 """
 
+from __future__ import annotations
+
 from pathlib import Path
 
 import pyarrow as pa

@@ -1,5 +1,7 @@
 """Test fixtures and synthetic Parquet file generators for parquet-guard tests."""
 
+from __future__ import annotations
+
 from pathlib import Path
 
 import pyarrow as pa

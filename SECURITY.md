@@ -1,7 +1,19 @@
-# Security policy
+# Security Policy
 
-Parquet Guard is currently an early public preview (v0.2.0 Alpha). No production security guarantee is implied.
+## Supported Versions
 
-Please **do not disclose exploitable vulnerabilities in a public GitHub issue**. Where enabled, use GitHub's **Private vulnerability reporting** feature in the repository Security tab. If it is unavailable, contact the maintainer through the contact method they publish in their GitHub profile before sharing exploit details.
+| Version     | Supported          |
+| ----------- | ------------------ |
+| 0.2.x-alpha | :white_check_mark: |
+| 0.1.x       | :white_check_mark: |
 
-The project's maintainer should configure a genuine private security contact method after creating the repository. The package should not be represented as independently security audited.
+## Reporting a Vulnerability
+
+We take the security and integrity of `parquet-guard` seriously. Because `parquet-guard` operates on untrusted or upstream Parquet metadata footers, memory safety and resilience against maliciously crafted headers are paramount.
+
+If you discover a security vulnerability or exploit:
+
+1. **Do not create a public GitHub Issue.**
+2. Please report the issue privately by emailing `liujingye@users.noreply.github.com` or via GitHub Private Vulnerability Reporting.
+3. Include a reproducible example, proof of concept, and affected versions.
+4. We will acknowledge receipt of your vulnerability report within 48 hours and coordinate a coordinated disclosure timeline.

@@ -74,19 +74,45 @@ def _parse_decimal_params(type_str: str) -> Optional[Tuple[str, int, int]]:
 
 
 def _parse_list_inner(type_str: str) -> Optional[str]:
-    """Extract inner element type from list<item: T> or list<T>."""
-    m = re.match(r"^list<(?:item:\s*)?(.+)>$", type_str.strip(), re.IGNORECASE)
+    """Extract inner element type from list<item: T>, large_list<T>, or fixed_size_list<T>[N]."""
+    m = re.match(
+        r"^(?:large_list|list|fixed_size_list)<(?:item:\s*)?(.+)>(?:\[\d+\])?$",
+        type_str.strip(),
+        re.IGNORECASE,
+    )
     if m:
         return m.group(1).strip()
     return None
 
 
 def _parse_map_params(type_str: str) -> Optional[Tuple[str, str]]:
-    """Extract key and value types from map<K, V> or map<entries: struct<key: K, value: V>>."""
-    m = re.match(r"^map<([^,]+),\s*([^>]+)>$", type_str.strip(), re.IGNORECASE)
-    if m:
-        return m.group(1).strip(), m.group(2).strip()
-    return None
+    """Extract key and value types from map<K, V> or map<K, V, keys_sorted>."""
+    t = type_str.strip()
+    if not t.lower().startswith("map<") or not t.endswith(">"):
+        return None
+
+    inner = t[4:-1].strip()
+    # Strip optional trailing , keys_sorted flag
+    m_sorted = re.search(r",\s*keys_sorted$", inner, re.IGNORECASE)
+    if m_sorted:
+        inner = inner[: m_sorted.start()].strip()
+
+    # Split on first comma not enclosed in nested brackets
+    depth = 0
+    comma_pos = -1
+    for i, ch in enumerate(inner):
+        if ch in "<([":
+            depth += 1
+        elif ch in ">)]":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            comma_pos = i
+            break
+
+    if comma_pos == -1:
+        return None
+
+    return inner[:comma_pos].strip(), inner[comma_pos + 1 :].strip()
 
 
 def is_safe_widening(old_type: str, new_type: str) -> bool:
@@ -121,10 +147,9 @@ def is_safe_widening(old_type: str, new_type: str) -> bool:
     if dec_old and dec_new:
         t_old, p_old, s_old = dec_old
         t_new, p_new, s_new = dec_new
-        # Scale must be preserved or widened with equal or greater integer digits
-        int_digits_old = p_old - s_old
-        int_digits_new = p_new - s_new
-        if s_new >= s_old and int_digits_new >= int_digits_old:
+        # In physical Parquet storage, scale changes alter the numeric interpretation of stored values.
+        # Scale must be strictly identical, while precision may be safely widened.
+        if s_old == s_new and p_new >= p_old:
             if t_old == t_new or (t_old == "decimal128" and t_new == "decimal256"):
                 return True
         return False

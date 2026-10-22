@@ -1,5 +1,7 @@
 """Unit tests for schema compatibility algebra and drift analysis."""
 
+from __future__ import annotations
+
 from parquet_guard.core.compatibility import (
     analyze_compatibility,
     compare_schemas,

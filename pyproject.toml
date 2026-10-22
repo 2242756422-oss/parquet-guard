@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "parquet-guard"
 version = "0.2.0"
-description = "Metadata-first Parquet schema inspection and contract validation for data pipelines."
+description = "High-performance, zero-data-scan Parquet schema contract & drift detection guard for data pipelines, MLOps, and CI/CD."
 readme = "README.md"
 authors = [
     { name = "Jingye Liu", email = "liujingye@users.noreply.github.com" }

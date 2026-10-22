@@ -8,44 +8,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Planned
-- Native GitHub Action wrapper (`parquet-guard-action`).
+- Native GitHub Action wrapper (`2242756422-oss/parquet-guard-action`).
 - Remote cloud storage streaming footer audit (AWS S3, Google Cloud Storage, Azure Blob).
 
-## [0.2.0] - 2026-10-22
+## [0.2.0-alpha] - 2026-10-22
+
+### Fixed
+- **Incremental Audit Cache State Leakage**: Removed dataset-relative `is_divergent` flags from per-file cached manifests (`CachedFileInfo`). Consistency is now dynamically evaluated across the active set of files in the current audit, preventing stale divergence states when offending files are deleted or modified.
+- **Bracket-Aware Map Type Parsing**: Replaced naive comma regex in `_parse_map_params` with a bracket-depth aware parser that cleanly handles `keys_sorted` attributes and nested values (e.g. `map<string, list<int32>, keys_sorted>`), ensuring safe widening rules evaluate correctly.
+- **Decimal Scale Invariance**: Prohibited decimal scale shifts in `is_safe_widening` (enforcing `s_old == s_new`). In Parquet physical storage, values are stored as unscaled integers; scale modifications alter the numeric magnitude and are strictly breaking.
+- **PyArrow Container Fallbacks**: Added fallback to `value_type` on `FixedSizeListType` and `ListType` when `value_field` is absent across Arrow binding variants.
+- **Python 3.9 Annotations**: Added `from __future__ import annotations` across all test modules to ensure clean syntax compatibility across Python 3.9 through 3.13.
+- **SARIF 2.1.0 Rules & URLs**: Expanded `tool.driver.rules` in SARIF exports to cover all known error codes, and aligned repository URLs to `https://github.com/2242756422-oss/parquet-guard`.
 
 ### Added
+- **Adversarial & Metamorphic Test Suite**: Added `tests/test_adversarial_v020_alpha.py` verifying incremental cache resilience under file deletion, bracket-aware Map parsing, decimal scale preservation, contract error handling, and CLI SARIF export. Total automated test suite expanded to **70 tests (100% pass rate)**.
 - **Deep Structural Type Equality**:
   - `FixedSizeList` list length verification (`list_size`). Structural size mismatches (e.g. vector embedding dimensions 512 vs 768) are classified as `BREAKING` with `CONTAINER_PARAM_CHANGED`.
   - `Dictionary` ordered flag tracking (`ordered`). Semantics mismatch triggers `BREAKING` in strict mode and `WARNING` in permissive mode (`ORDERED_FLAG_CHANGED`).
   - `Map` key order flag tracking (`keys_sorted`). Flag change triggers `BREAKING` in strict mode and `WARNING` in permissive mode (`KEYS_SORTED_CHANGED`).
   - `Decimal` scale and precision shift detection (`DECIMAL_SCALE_MISMATCH`). Prevents silent precision loss or misaligned arithmetic in financial workflows.
   - `Timestamp` timezone and resolution mismatch detection (`TIMESTAMP_TIMEZONE_MISMATCH`).
-- **Incremental Dataset Audit Cache**:
+- **Experimental Incremental Dataset Audit Cache**:
   - Implemented `DatasetAuditCache` in `src/parquet_guard/core/cache.py` with atomic write semantics (`.parquet_guard_cache.json`).
-  - Tracks partition `mtime_ns` and `file_size_bytes` to bypass redundant footer deserialization and SHA-256 fingerprinting on unmodified files.
+  - Tracks partition `mtime_ns` and `file_size_bytes` and caches parsed `SchemaContract` definitions to bypass redundant footer deserialization on unmodified files.
   - Added CLI options `--incremental`, `--force-full`, and `--cache-path` to `parquet-guard audit`.
-  - Exposes `cache_hits`, `cache_misses`, and `incremental` properties on `PartitionAuditResult`.
 - **OASIS SARIF 2.1.0 Native Reporting**:
   - Added SARIF export functions `format_diff_sarif` and `format_audit_sarif` in `src/parquet_guard/core/reporter.py`.
   - Added `--format sarif` support to `parquet-guard check`, `parquet-guard diff`, and `parquet-guard audit` commands.
-  - Seamlessly integrates with GitHub Code Scanning alerts (`github/codeql-action/upload-sarif@v3`).
 - **Contract Schema Validation & Integrity**:
   - Added `parquet-guard validate-contract` CLI command and `validate_contract()` API in `src/parquet_guard/core/inspector.py`.
   - Enforced strict contract structure (`SUPPORTED_VERSIONS = {"1.0"}`, `extra="forbid"`, mandatory non-empty column fields, strict duplicate column rejection).
 - **ResultState State Machine**:
   - Unified operational outcomes across all audit and comparison operations: `VALID`, `INVALID`, `DRIFTED`, `COMPATIBLE`, `INCOMPATIBLE`, `INDETERMINATE`, and `INSPECTION_ERROR`.
-- **Dynamic CI Build Testing**:
-  - Updated `.github/workflows/ci.yml` to extract wheel package version dynamically via `tomllib`, ensuring CI passes reliably across version increments without manual workflow editing.
-
-### Fixed
-- **CLI Diff Markdown Report Header**:
-  - Standardized Markdown title to `## 🛡️ Parquet-Guard Schema Validation Report` across all diff and check reporting paths.
-- **Contract Deserialization Invariants**:
-  - Guaranteed exact round-trip preservation of custom nested Arrow types, metadata dictionaries, and complex container attributes across JSON serialization and deserialization.
-
-### Security & Quality
-- Expanded automated test suite from 57 to **64 automated tests** with 100% pass rate.
-- Verified zero errors across Ruff linter, Ruff formatter, and Mypy strict type checking.
 
 ## [0.1.2] - 2026-10-22
 
@@ -58,8 +53,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `--fail-on-warnings` flag to `parquet-guard audit` CLI, allowing CI/CD workflows to strictly gate on non-breaking schema drift or warnings.
 - Structured compatibility properties `is_compatible`, `has_drift`, `warnings_count`, and `breaking_count` on `PartitionAuditResult`.
-- Updated terminal, markdown, and JSON reporters displaying both backward-compatibility status and schema drift detection.
-- Comprehensive regression test suite `tests/test_nested_compatibility_and_audit.py` (total test suite expanded to 57 automated tests).
 
 ## [0.1.1] - 2026-10-22
 
@@ -71,7 +64,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Explicit baseline contract option (`-c` / `--contract` / `-b` / `--baseline`) for `parquet-guard audit` command and `audit_dataset(baseline_contract=...)` API.
-- End-to-end regression test suite (`tests/test_directionality_and_nested_types.py`) covering directionality, frequency invariance, duplicate column rejection, and nested types.
 
 ## [0.1.0] - 2026-10-22
 
@@ -81,8 +73,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Schema validation against contracts with permissive and strict modes (`parquet-guard check`).
 - Direct schema diffing between two Parquet files (`parquet-guard diff`).
 - Multi-partition directory dataset audit engine (`parquet-guard audit`).
-- Semantic compatibility algebra supporting unidirectional type widening (int8->int16->int32->int64, float32->float64, string widening).
-- Nullability transition safety analysis.
-- Multi-format reporting (Rich terminal, GitHub-flavored Markdown for PRs, and machine-readable JSON).
-- Comprehensive automated test suite covering unit, CLI, edge cases, and corrupted file handling.
-- Full type annotations with mypy validation and ruff code styling.
+- Semantic compatibility algebra supporting unidirectional type widening.

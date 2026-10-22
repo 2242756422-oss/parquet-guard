@@ -7,13 +7,17 @@ import os
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
 class CachedFileInfo(BaseModel):
-    """Cached metadata and audit evaluation for an individual Parquet partition file."""
+    """Cached intrinsic metadata and schema fingerprint for an individual Parquet partition file.
+
+    Note: Consistency and divergence are relational properties evaluated dynamically across
+    the current dataset, ensuring no stale divergence state leaks when partitions are deleted or modified.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -23,39 +27,27 @@ class CachedFileInfo(BaseModel):
     row_groups: int
     column_count: int
     schema_fingerprint: str
-    is_divergent: bool = False
-    divergence_reason: Optional[str] = None
-    warnings: List[str] = Field(default_factory=list)
+    is_corrupted: bool = False
+    has_duplicate_columns: bool = False
+    error_message: Optional[str] = None
 
 
 class DatasetAuditCache(BaseModel):
-    """Manifest file persisting audit evaluations across unchanged partition files."""
+    """Manifest file persisting partition metadata and schema ASTs across unchanged files."""
 
     model_config = ConfigDict(extra="forbid")
 
     version: str = "1.0"
     dataset_root: str
-    contract_fingerprint: str
-    mode: str
-    check_metadata: bool
-    check_field_order: bool
     updated_at: str
     files: Dict[str, CachedFileInfo] = Field(default_factory=dict)
+    schemas: Dict[str, Dict[str, Any]] = Field(
+        default_factory=dict, description="Mapping of schema fingerprint to serialized SchemaContract"
+    )
 
-    def is_cache_valid(
-        self,
-        contract_fp: str,
-        mode: str,
-        check_metadata: bool,
-        check_field_order: bool,
-    ) -> bool:
-        """Verify whether cached evaluation matches current contract and audit parameters."""
-        return (
-            self.contract_fingerprint == contract_fp
-            and self.mode == mode
-            and self.check_metadata == check_metadata
-            and self.check_field_order == check_field_order
-        )
+    def is_cache_valid(self, version: str = "1.0") -> bool:
+        """Verify whether cached manifest matches supported cache version."""
+        return self.version == version
 
 
 def load_audit_cache(cache_path: Union[str, Path]) -> Optional[DatasetAuditCache]:

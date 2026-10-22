@@ -166,11 +166,6 @@ def audit_dataset(
     active_cache_path: Optional[Path] = None
     loaded_cache: Optional[DatasetAuditCache] = None
     is_cache_valid = False
-    contract_fp = (
-        compute_schema_fingerprint(baseline_contract, check_metadata, should_check_order)
-        if baseline_contract
-        else "UNGROUNDED"
-    )
 
     if incremental:
         if cache_path:
@@ -184,9 +179,7 @@ def audit_dataset(
 
         if not force_full and active_cache_path:
             loaded_cache = load_audit_cache(active_cache_path)
-            if loaded_cache and loaded_cache.is_cache_valid(
-                contract_fp, mode, check_metadata, should_check_order
-            ):
+            if loaded_cache and loaded_cache.is_cache_valid():
                 is_cache_valid = True
 
     new_cache_entries: Dict[str, CachedFileInfo] = {}
@@ -205,21 +198,59 @@ def audit_dataset(
                 total_bytes += cached.file_size_bytes
                 new_cache_entries[file_key] = cached
 
-                if cached.is_divergent:
+                if cached.is_corrupted:
+                    err_msg = cached.error_message or "Cached record indicates corrupted file."
+                    rep = PartitionFileReport(
+                        file_path=str(file_path),
+                        file_size_bytes=cached.file_size_bytes,
+                        row_count=cached.row_count,
+                        row_groups=cached.row_groups,
+                        column_count=cached.column_count,
+                        schema_fingerprint="CORRUPTED",
+                        is_divergent=True,
+                        divergence_reason=err_msg,
+                    )
+                    file_reports.append(rep)
+                    divergence_details.append(f"File '{file_path}': {err_msg}")
                     divergent_count += 1
-                    if cached.divergence_reason:
-                        divergence_details.append(f"File '{file_path}': {cached.divergence_reason}")
+                    continue
 
-                # Ensure schema contract is loaded if we need it for partition aggregation
-                if (
-                    cached.schema_fingerprint not in schemas_by_fingerprint
-                    and cached.schema_fingerprint not in ("CORRUPTED", "DUPLICATE_COLUMNS")
-                ):
-                    try:
-                        contract = inspect_schema(file_path)
-                        schemas_by_fingerprint[cached.schema_fingerprint] = contract
-                    except Exception:
-                        pass
+                if cached.has_duplicate_columns:
+                    err_msg = cached.error_message or "Cached record indicates duplicate columns."
+                    rep = PartitionFileReport(
+                        file_path=str(file_path),
+                        file_size_bytes=cached.file_size_bytes,
+                        row_count=cached.row_count,
+                        row_groups=cached.row_groups,
+                        column_count=cached.column_count,
+                        schema_fingerprint="DUPLICATE_COLUMNS",
+                        is_divergent=True,
+                        divergence_reason=err_msg,
+                    )
+                    file_reports.append(rep)
+                    divergence_details.append(f"File '{file_path}': {err_msg}")
+                    divergent_count += 1
+                    continue
+
+                # Ensure schema contract is loaded into schemas_by_fingerprint from cache
+                if cached.schema_fingerprint not in schemas_by_fingerprint:
+                    if cached.schema_fingerprint in loaded_cache.schemas:
+                        try:
+                            schemas_by_fingerprint[cached.schema_fingerprint] = SchemaContract.model_validate(
+                                loaded_cache.schemas[cached.schema_fingerprint]
+                            )
+                        except Exception:
+                            try:
+                                contract = inspect_schema(file_path)
+                                schemas_by_fingerprint[cached.schema_fingerprint] = contract
+                            except Exception:
+                                pass
+                    else:
+                        try:
+                            contract = inspect_schema(file_path)
+                            schemas_by_fingerprint[cached.schema_fingerprint] = contract
+                        except Exception:
+                            pass
 
                 file_reports.append(
                     PartitionFileReport(
@@ -229,9 +260,7 @@ def audit_dataset(
                         row_groups=cached.row_groups,
                         column_count=cached.column_count,
                         schema_fingerprint=cached.schema_fingerprint,
-                        is_divergent=cached.is_divergent,
-                        divergence_reason=cached.divergence_reason,
-                        warnings=cached.warnings,
+                        is_divergent=False,
                     )
                 )
                 continue
@@ -269,8 +298,9 @@ def audit_dataset(
                         row_groups=meta["num_row_groups"],
                         column_count=meta["num_columns"],
                         schema_fingerprint="DUPLICATE_COLUMNS",
-                        is_divergent=True,
-                        divergence_reason=reason,
+                        is_corrupted=False,
+                        has_duplicate_columns=True,
+                        error_message=reason,
                     )
                 continue
 
@@ -301,7 +331,8 @@ def audit_dataset(
                     row_groups=meta["num_row_groups"],
                     column_count=meta["num_columns"],
                     schema_fingerprint=fp,
-                    is_divergent=False,
+                    is_corrupted=False,
+                    has_duplicate_columns=False,
                 )
 
         except Exception as exc:
@@ -319,6 +350,33 @@ def audit_dataset(
             file_reports.append(rep)
             divergence_details.append(f"File '{file_path}': {err_reason}")
             divergent_count += 1
+            if stat:
+                new_cache_entries[file_key] = CachedFileInfo(
+                    file_size_bytes=stat.st_size,
+                    mtime_ns=stat.st_mtime_ns,
+                    row_count=0,
+                    row_groups=0,
+                    column_count=0,
+                    schema_fingerprint="CORRUPTED",
+                    is_corrupted=True,
+                    has_duplicate_columns=False,
+                    error_message=err_reason,
+                )
+
+    def _persist_cache() -> None:
+        if incremental and active_cache_path:
+            schemas_data = {
+                fp: contract.model_dump(exclude_none=True) for fp, contract in schemas_by_fingerprint.items()
+            }
+            save_audit_cache(
+                DatasetAuditCache(
+                    dataset_root=path_str,
+                    updated_at="",
+                    files=new_cache_entries,
+                    schemas=schemas_data,
+                ),
+                active_cache_path,
+            )
 
     valid_schemas: Dict[str, SchemaContract] = {}
     fingerprint_counts: Dict[str, int] = {}
@@ -409,21 +467,7 @@ def audit_dataset(
         else:
             res_state = ResultState.VALID
 
-        # Save cache if incremental
-        if incremental and active_cache_path:
-            save_audit_cache(
-                DatasetAuditCache(
-                    dataset_root=path_str,
-                    contract_fingerprint=contract_fp,
-                    mode=mode,
-                    check_metadata=check_metadata,
-                    check_field_order=should_check_order,
-                    updated_at="",
-                    files=new_cache_entries,
-                ),
-                active_cache_path,
-            )
-
+        _persist_cache()
         return PartitionAuditResult(
             root_path=path_str,
             total_files_scanned=len(files),
@@ -455,20 +499,7 @@ def audit_dataset(
         has_drift_val = not is_comp or len(drifts) > 0
         res_state = ResultState.INCOMPATIBLE if not is_comp else ResultState.VALID
 
-        if incremental and active_cache_path:
-            save_audit_cache(
-                DatasetAuditCache(
-                    dataset_root=path_str,
-                    contract_fingerprint=contract_fp,
-                    mode=mode,
-                    check_metadata=check_metadata,
-                    check_field_order=should_check_order,
-                    updated_at="",
-                    files=new_cache_entries,
-                ),
-                active_cache_path,
-            )
-
+        _persist_cache()
         return PartitionAuditResult(
             root_path=path_str,
             total_files_scanned=len(files),
@@ -519,20 +550,7 @@ def audit_dataset(
                         f"File '{r.file_path}': [{d.severity.value}] ({d.change_type.value}) {d.description}"
                     )
 
-        if incremental and active_cache_path:
-            save_audit_cache(
-                DatasetAuditCache(
-                    dataset_root=path_str,
-                    contract_fingerprint=contract_fp,
-                    mode=mode,
-                    check_metadata=check_metadata,
-                    check_field_order=should_check_order,
-                    updated_at="",
-                    files=new_cache_entries,
-                ),
-                active_cache_path,
-            )
-
+        _persist_cache()
         return PartitionAuditResult(
             root_path=path_str,
             total_files_scanned=len(files),
@@ -617,20 +635,7 @@ def audit_dataset(
         has_drift_val = len(drifts) > 0 or not is_comp
         res_state = ResultState.DRIFTED if (has_drift_val or warnings_count > 0) else ResultState.VALID
 
-        if incremental and active_cache_path:
-            save_audit_cache(
-                DatasetAuditCache(
-                    dataset_root=path_str,
-                    contract_fingerprint=contract_fp,
-                    mode=mode,
-                    check_metadata=check_metadata,
-                    check_field_order=should_check_order,
-                    updated_at="",
-                    files=new_cache_entries,
-                ),
-                active_cache_path,
-            )
-
+        _persist_cache()
         return PartitionAuditResult(
             root_path=path_str,
             total_files_scanned=len(files),

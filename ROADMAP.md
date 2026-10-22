@@ -1,29 +1,40 @@
 # Project Roadmap: `parquet-guard`
 
-This document tracks planned architectural features, community milestones, and integration targets for `parquet-guard`.
+This document tracks completed milestones, current Alpha capabilities, and planned architectural features for `parquet-guard`.
 
 ---
 
-## Phase 1: MVP & Core Validation (v0.1.0 - Current)
-- [x] Zero-data-scan Parquet footer inspection engine.
-- [x] Declarative JSON SchemaContract specification.
-- [x] Backward-compatibility rules (safe widening vs breaking narrowing).
-- [x] Multi-partition dataset consistency auditor.
-- [x] CLI commands (`inspect`, `check`, `diff`, `audit`, `init-contract`).
-- [x] Terminal, Markdown, and JSON reporting formats.
-- [x] Comprehensive test suite & packaging with `uv build`.
+## Current Status: v0.2.0 (Alpha)
+
+- [x] **Zero-Data-Scan Footer Inspection**: Pure metadata inspection reading trailing Parquet bytes via PyArrow without decoding data pages.
+- [x] **Declarative Golden Contracts**: JSON `SchemaContract` (v1.0) generation, round-trip serialization, and syntax validation (`init-contract`, `validate-contract`).
+- [x] **Directional Compatibility Algebra**: Formal classification of breaking regressions vs safe unidirectional type widenings (e.g. `int32` -> `int64`, string widening).
+- [x] **Deep Structural Type Equality**:
+  - `FixedSizeList` list length verification (`list_size`).
+  - `Dictionary` ordered sorting flag tracking (`ordered`).
+  - `Map` key order flag tracking (`keys_sorted`) with bracket-aware parser.
+  - `Decimal` scale and precision invariance (prohibiting unscaled integer shifts).
+  - `Timestamp` timezone and resolution mismatch detection.
+  - Deep nested `Struct`, `List`, and `Map` child field order and metadata retention.
+- [x] **Deterministic Partition Auditor**: Permutation-invariant consistency checking across directory trees with mutual compatibility evaluation.
+- [x] **Experimental Incremental Auditing**: Local manifest caching (`.parquet_guard_cache.json`) with mtime/size validation, avoiding stale dataset-relative divergence leakage.
+- [x] **OASIS SARIF 2.1.0 Reporting**: Machine-readable vulnerability and code-scanning reports integrating with GitHub Code Scanning (`upload-sarif`).
+- [x] **Multi-format Reporting**: Rich ANSI terminal, GitHub-Flavored Markdown for PR comments, raw JSON, and SARIF 2.1.0.
 
 ---
 
-## Phase 2: Ecosystem Integration (v0.2.0 - Q4 2026)
-- [ ] **Official Pre-commit Hook**: Publish `.pre-commit-hooks.yaml` for zero-install developer checks.
-- [ ] **GitHub Action Wrapper**: Publish `liujingye/parquet-guard-action` on GitHub Marketplace with automated PR commenting.
-- [ ] **Cloud Storage Direct Footer Streaming**: Support `s3://`, `gs://`, and `az://` URIs by leveraging HTTP range requests to download only the trailing 32KB footer without downloading entire remote files.
-- [ ] **Polars & DuckDB Plugin / Macro**: Provide native SQL macros (`SELECT * FROM parquet_guard_check(...)`).
+## Planned for v0.3.0 (Beta)
+
+- [ ] **Native GitHub Action Wrapper**: Publish `2242756422-oss/parquet-guard-action` on GitHub Marketplace for one-line workflow integration.
+- [ ] **Official Pre-commit Hook**: Publish `.pre-commit-hooks.yaml` for pre-commit linting in developer repositories.
+- [ ] **Cloud Storage Direct Footer Streaming**: Support `s3://`, `gs://`, and `az://` URIs by leveraging HTTP range requests to download only trailing footer bytes without transferring entire objects.
+- [ ] **Statistical Metadata Drift Detection**: Monitor min/max/null_count shifts recorded in Parquet column statistics across partitions.
+- [ ] **OpenDataContract Interoperability**: Support import/export of OpenDataContract standard YAML definitions.
 
 ---
 
-## Phase 3: Advanced MLOps & Enterprise Features (v0.3.0 - Q1 2027)
-- [ ] **Data Contract Spec (OpenDataContract) Interoperability**: Support import/export of Linux Foundation OpenDataContract YAMLs.
-- [ ] **Statistical Metadata Drift Detection**: Detect min/max outlier shifts recorded in Parquet column statistics across partitions.
-- [ ] **Codex-Assisted Automated PR Review Bot**: Leverage OpenAI Codex API credits to automatically generate pull request fix suggestions when schema drift is detected.
+## Known Current Limitations (Alpha)
+
+1. **Local and Mounted Filesystems Only**: Cloud storage URIs (`s3://`, `gs://`) require mounting (e.g. via FUSE or AWS S3 mount) or pre-downloading files locally.
+2. **Incremental Auditing is Experimental**: Incremental caching relies on filesystem `mtime_ns` and `file_size_bytes`. In environments where file modification times are not preserved (e.g. fresh `git clone` or ephemeral CI runners without persistent cache mounts), full audits should be used (`--force-full`).
+3. **In-Memory Schema Contracts**: While Parquet files are never scanned into memory, contract ASTs and partition file metadata are held in Python process memory. Auditing millions of partition files in a single invocation will require paging or streaming aggregators.
