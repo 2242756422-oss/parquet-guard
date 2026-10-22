@@ -1,16 +1,29 @@
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
-.venv/
-venv/
+*$py.class
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# Testing & Linting
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
 .coverage
 htmlcov/
-dist/
-build/
-*.egg-info/
+
+# Environments
+.venv/
+env/
+venv/
+ENV/
+
+# OS and IDE
 .DS_Store
-.env
-.env.*
-!.env.example
+.idea/
+.vscode/
+*.swp

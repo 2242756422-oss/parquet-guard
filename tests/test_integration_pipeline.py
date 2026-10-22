@@ -1,5 +1,7 @@
 """Integration test verifying data pipeline guard with real ingestion lifecycle."""
 
+from __future__ import annotations
+
 from pathlib import Path
 
 from examples.data_pipeline_guard.test_pipeline import test_guarded_pipeline_lifecycle

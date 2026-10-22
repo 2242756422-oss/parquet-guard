@@ -60,9 +60,13 @@ def arrow_field_to_definition(field: pa.Field) -> FieldDefinition:
         list_size = pa_type.list_size
         if hasattr(pa_type, "value_field") and pa_type.value_field is not None:
             children.append(arrow_field_to_definition(pa_type.value_field))
+        elif hasattr(pa_type, "value_type") and pa_type.value_type is not None:
+            children.append(FieldDefinition(name="item", type=str(pa_type.value_type), nullable=True))
     elif pa.types.is_list(pa_type) or pa.types.is_large_list(pa_type):
         if hasattr(pa_type, "value_field") and pa_type.value_field is not None:
             children.append(arrow_field_to_definition(pa_type.value_field))
+        elif hasattr(pa_type, "value_type") and pa_type.value_type is not None:
+            children.append(FieldDefinition(name="item", type=str(pa_type.value_type), nullable=True))
     elif pa.types.is_map(pa_type):
         keys_sorted = bool(pa_type.keys_sorted)
         if hasattr(pa_type, "key_field") and pa_type.key_field is not None:

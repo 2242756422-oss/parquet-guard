@@ -1,14 +1,31 @@
-## Summary
+## Description
 
-Describe the changes.
+Please include a summary of the changes and the related issue. Please also include relevant motivation and context.
 
-## Verification
+Fixes # (issue)
 
-- [ ] Tests added or updated.
-- [ ] Relevant tests executed.
-- [ ] Documentation updated where necessary.
-- [ ] No unrelated changes included.
+## Type of change
 
-## Notes
+- [ ] Bug fix (non-breaking change which fixes an issue)
+- [ ] New feature (non-breaking change which adds functionality)
+- [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected)
+- [ ] Documentation update
+- [ ] Performance improvement / benchmark update
 
-Describe risks, limitations, or follow-up work.
+## How Has This Been Tested?
+
+Please describe the tests that you ran to verify your changes:
+- [ ] Unit tests (`pytest tests/`)
+- [ ] Linter & formatting (`ruff check . && ruff format --check .`)
+- [ ] Static type check (`mypy src/parquet_guard`)
+- [ ] Real Parquet file fixture execution
+
+## Checklist:
+
+- [ ] My code follows the style guidelines of this project
+- [ ] I have performed a self-review of my own code
+- [ ] I have commented my code, particularly in hard-to-understand areas
+- [ ] I have made corresponding changes to the documentation
+- [ ] My changes generate no new warnings
+- [ ] I have added tests that prove my fix is effective or that my feature works
+- [ ] New and existing unit tests pass locally with my changes

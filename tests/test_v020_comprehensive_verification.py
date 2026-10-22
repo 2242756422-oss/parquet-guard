@@ -9,6 +9,8 @@
 8. Distinct ResultState and ErrorCode classification.
 """
 
+from __future__ import annotations
+
 import json
 from pathlib import Path
 

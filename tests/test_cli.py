@@ -1,5 +1,7 @@
 """End-to-end tests for the Click CLI interface."""
 
+from __future__ import annotations
+
 from pathlib import Path
 
 from click.testing import CliRunner

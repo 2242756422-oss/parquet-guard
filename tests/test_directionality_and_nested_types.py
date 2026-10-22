@@ -5,6 +5,8 @@
 4. Deep Arrow nested types (Struct, List, Map) child metadata, nullability, and order checks.
 """
 
+from __future__ import annotations
+
 from pathlib import Path
 
 import pyarrow as pa

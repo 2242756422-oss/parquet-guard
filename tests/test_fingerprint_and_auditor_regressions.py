@@ -8,6 +8,8 @@
 6. Decimal, Struct, List, Map, and Timestamp consistency verification.
 """
 
+from __future__ import annotations
+
 from pathlib import Path
 
 import pyarrow as pa

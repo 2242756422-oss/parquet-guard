@@ -4,6 +4,8 @@ Designed for modern data pipelines (DuckDB, Polars, PyArrow, Spark),
 MLOps feature stores, and CI/CD pull request validation.
 """
 
+from __future__ import annotations
+
 from parquet_guard.core.auditor import audit_dataset, compute_schema_fingerprint
 from parquet_guard.core.cache import (
     CachedFileInfo,
