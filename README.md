@@ -148,6 +148,27 @@ Run the 12-scenario synthetic evaluation benchmark measuring finding identificat
 parquet-guard eval-ai --provider mock
 ```
 
+> **Evaluation Classification Note**: The default `--provider mock` suite measures offline test harness integrity, XML prompt parsing, citation-id validation, and fallback logic against deterministic baselines. It does **not** evaluate live frontier model reasoning capabilities (which requires configuring an active remote provider and API key).
+
+---
+
+## 🔒 Architectural Boundaries & Privacy Model
+
+To ensure absolute clarity for enterprise and compliance reviewers, `parquet-guard` maintains strict boundaries across all subsystems:
+
+### 1. Privacy & Data Transmission Boundary
+- **Zero Raw Row Data Access**: `parquet-guard` never reads, buffers, or transmits table rows, record contents, or cell values.
+- **Schema Metadata Disclosure**: When and only when a remote provider is explicitly configured (e.g., `--provider openai`), schema structural metadata (field names, Arrow data types, nullability flags, field/schema metadata keys/values, deterministic error codes, finding descriptions, and optional user context) is serialized into prompt payloads and transmitted via HTTPS to the user-specified provider endpoint.
+- **Offline by Default**: In default operation (`check`, `diff`, `audit`, `inspect`), and when using the offline deterministic explainer or `--provider mock`, zero network requests are initiated.
+
+### 2. Contract Schema Validation vs. Physical Data Migration
+- **Schema Contract Validation**: Operations such as `validate-contract`, `check`, and `propose_contract_evolution` perform in-memory deterministic AST validation, ensuring that a target schema satisfies a declarative contract without breaking changes.
+- **Physical Migration Script Generation**: The `propose-migration` command generates runnable Python/PyArrow transformation code for pipeline operators to review. `parquet-guard` does **not** physically rewrite, mutate, or migrate production data partitions on disk without manual execution by an authorized operator.
+
+### 3. Agent Tool Calling vs. MCP Daemon
+- **Agent Interoperability**: `parquet_guard.ai.agent_tools` provides OpenAI-compatible function-calling schemas (`AGENT_TOOL_DEFINITIONS`) and an in-process tool dispatcher (`call_agent_tool`).
+- **Protocol Distinction**: This module provides an agent tool interface for integration into existing agent runtimes; it is **not** a standalone Model Context Protocol (MCP) JSON-RPC stdio/SSE server daemon.
+
 ---
 
 ## 🐍 Python API

@@ -1,7 +1,11 @@
 """Reproducible AI Evaluation Framework for Parquet Guard.
 
 Builds:
-1. Synthetic benchmark dataset of 12 diverse Arrow schema evolution scenarios.
+1. Synthetic benchmark dataset of 12 diverse Arrow schema evolution scenarios for
+   offline mock harness verification and interface consistency testing.
+   Note: When executed with the default Mock provider, this measures test harness
+   consistency, finding extraction, and contract preservation against deterministic
+   baselines, NOT live frontier model reasoning capability.
 2. Scoring dimensions:
    - finding_identification_accuracy (0.0 to 1.0)
    - evidence_reference_validity (0.0 to 1.0)
@@ -465,14 +469,21 @@ def run_evaluation_suite(
 
 def format_evaluation_markdown(report: EvaluationSuiteReport) -> str:
     """Format evaluation report as detailed Markdown table."""
+    suite_badge = (
+        "OFFLINE HARNESS / CONSISTENCY TEST" if report.provider_name == "mock" else "LIVE MODEL BENCHMARK"
+    )
     lines: list[str] = [
-        f"## 🧪 {report.suite_name}",
+        f"## 🧪 {report.suite_name} ({suite_badge})",
         "",
         f"> **Provider**: `{report.provider_name}` | **Model**: `{report.model_id}`  ",
+        f"> **Classification**: {'Offline Mock Harness & Interface Consistency' if report.provider_name == 'mock' else 'Live Remote Evaluation'}  ",
         f"> **Total Scenarios**: `{report.total_scenarios}` | **Pass Rate**: `{report.pass_rate}%` ({report.passed_scenarios}/{report.total_scenarios})  ",
         f"> **Factual Consistency**: `{report.factual_consistency_rate * 100:.1f}%` | **Finding Accuracy**: `{report.mean_finding_accuracy * 100:.1f}%`  ",
         f"> **Evidence Citation Validity**: `{report.mean_evidence_validity * 100:.1f}%` | **Injection Defense**: `{report.injection_defense_rate * 100:.1f}%`  ",
         f"> **Average Latency**: `{report.average_latency_ms:.2f} ms`  ",
+        "",
+        "> [!NOTE]",
+        "> When run with `--provider mock`, this suite evaluates offline harness integrity, prompt-format parsing, citation-id validation, and fallback logic against deterministic baselines. It does NOT evaluate live LLM reasoning accuracy.",
         "",
         "### Scenario Results Breakdown",
         "| Scenario ID | Name | Category | Status | Verdict Preserved | Accuracy | Citation Validity | Latency |",

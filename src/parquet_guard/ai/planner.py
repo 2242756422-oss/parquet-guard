@@ -5,6 +5,14 @@ Generates:
 2. Step-by-step migration plans.
 3. Executable, verifiable PyArrow migration scripts.
 4. RIGID DETERMINISTIC VALIDATION: Verifies that the proposed contract satisfies the target schema before reporting success.
+
+ARCHITECTURAL BOUNDARY:
+- In-Memory Contract Validation: `propose_contract_evolution` deterministically validates
+  that the updated SchemaContract accommodates the target schema without regressions.
+- Physical Data Migration Execution: `generate_migration_plan` synthesizes and formats
+  executable PyArrow transformation scripts for operator review. Parquet Guard itself
+  does NOT physically mutate production partition files on disk without explicit operator
+  execution of the generated migration script.
 """
 
 from __future__ import annotations

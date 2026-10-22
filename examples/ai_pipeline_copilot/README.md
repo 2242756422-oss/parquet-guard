@@ -13,7 +13,13 @@ This runnable demonstration illustrates how `parquet-guard` and `parquet-guard A
 4. **Deterministic Gate**: `parquet-guard check` detects the breaking changes and blocks the CI pull request.
 5. **AI Drift Diagnosis**: `parquet-guard explain` receives the normalized structural findings and delivers an evidence-grounded diagnosis with zero raw data leaks.
 6. **AI Migration Planner**: `parquet-guard propose-migration` generates an updated contract proposal and validated PyArrow conversion code.
-7. **Deterministic Verification**: The proposed migration is deterministically verified against the target schema, proving full compatibility before deployment.
+7. **Deterministic Verification**: The proposed migration contract is deterministically verified against the target schema, proving full compatibility before deployment.
+
+## Architectural Boundaries
+
+- **Offline Simulation vs Live Models**: This demo runs with `MockAIProvider` (`mock-copilot`), demonstrating deterministic fallback and structural reasoning without external network calls or API keys.
+- **Contract Check vs Physical Migration**: Step 6 deterministically validates the proposed schema contract in memory and synthesizes a runnable PyArrow conversion script. Physical migration of production files is performed by executing the generated script.
+- **Privacy & Metadata Boundary**: Zero data rows are scanned or read. Only structural schema ASTs, field names, and error codes are normalized into diagnosis prompts.
 
 ## Running the Demo
 

@@ -1,7 +1,12 @@
 """Agent Interoperability & Tool-Use Interfaces for Parquet Guard.
 
 Exposes deterministic and AI-assisted capabilities as structured tools
-for AI coding agents, OpenAI Function Calling, Anthropic Tools, and MCP servers.
+for AI coding agents, OpenAI Function Calling, and external agent frameworks.
+
+ARCHITECTURAL BOUNDARY:
+This module provides standard OpenAI-compatible tool definitions (`AGENT_TOOL_DEFINITIONS`)
+and an in-process tool execution dispatcher (`call_agent_tool`). It does NOT implement
+a standalone Model Context Protocol (MCP) JSON-RPC stdio/SSE server daemon.
 """
 
 from __future__ import annotations

@@ -671,6 +671,11 @@ def eval_ai_cmd(
             f"({report.pass_rate}%). Factual consistency: {report.factual_consistency_rate * 100:.1f}%.",
             fg="green" if report.pass_rate >= 80.0 else "yellow",
         )
+        if provider == "mock":
+            click.secho(
+                "Notice: Mock provider scores verify test harness, parsing, and contract consistency (offline simulation, not live LLM reasoning).",
+                dim=True,
+            )
         sys.exit(0)
 
     except Exception as exc:

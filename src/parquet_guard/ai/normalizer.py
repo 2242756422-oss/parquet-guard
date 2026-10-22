@@ -3,9 +3,16 @@
 Transforms deterministic DiffReports and SchemaContracts into structured,
 sanitized NormalizedEvidence payloads with stable finding identifiers.
 
-CRITICAL PRIVACY GUARANTEE:
-Zero raw row data is ever accessed, inspected, or converted into evidence.
-Only structural schema ASTs and metadata attributes are normalized.
+CRITICAL PRIVACY GUARANTEE & METADATA BOUNDARY:
+- Raw Data Rows: Zero record values, row contents, or data payloads are ever
+  accessed, read, or transmitted.
+- Metadata Disclosed: When remote AI providers (e.g., OpenAICompatibleProvider)
+  are configured and invoked, schema structural metadata (field names, Arrow
+  data types, nullabilities, field/schema metadata keys and values, deterministic
+  error codes, diff descriptions, and optional user-supplied context) is serialized
+  into prompts and transmitted over HTTPS to the configured provider endpoint.
+  When using the default offline deterministic engine or MockAIProvider, zero
+  network requests are made.
 """
 
 from __future__ import annotations
