@@ -188,9 +188,25 @@ def audit_dataset(
         file_key = str(file_path.resolve())
         stat = file_path.stat() if file_path.exists() else None
 
-        # Check incremental cache hit
-        if is_cache_valid and loaded_cache and file_key in loaded_cache.files and stat:
-            cached = loaded_cache.files[file_key]
+        # Check incremental cache hit (supports absolute paths and portable relative paths)
+        cached_candidate: Optional[CachedFileInfo] = None
+        if is_cache_valid and loaded_cache and stat:
+            if file_key in loaded_cache.files:
+                cached_candidate = loaded_cache.files[file_key]
+            else:
+                try:
+                    rel_str = str(file_path)
+                    if rel_str in loaded_cache.files:
+                        cached_candidate = loaded_cache.files[rel_str]
+                    elif target_path.is_dir() and file_path.resolve().is_relative_to(target_path.resolve()):
+                        rel_target = str(file_path.resolve().relative_to(target_path.resolve()))
+                        if rel_target in loaded_cache.files:
+                            cached_candidate = loaded_cache.files[rel_target]
+                except Exception:
+                    pass
+
+        if cached_candidate is not None and stat:
+            cached = cached_candidate
             if cached.file_size_bytes == stat.st_size and cached.mtime_ns == stat.st_mtime_ns:
                 # Cache HIT!
                 cache_hits += 1
@@ -234,7 +250,7 @@ def audit_dataset(
 
                 # Ensure schema contract is loaded into schemas_by_fingerprint from cache
                 if cached.schema_fingerprint not in schemas_by_fingerprint:
-                    if cached.schema_fingerprint in loaded_cache.schemas:
+                    if loaded_cache is not None and cached.schema_fingerprint in loaded_cache.schemas:
                         try:
                             schemas_by_fingerprint[cached.schema_fingerprint] = SchemaContract.model_validate(
                                 loaded_cache.schemas[cached.schema_fingerprint]

@@ -32,7 +32,7 @@ It prevents costly production data pipeline crashes and silent type truncations 
 
 | Existing Approach | Fatal Flaws |
 | :--- | :--- |
-| **Great Expectations / Soda** | Heavyweight, complex configuration, requires scanning full dataset rows into memory; too slow for high-frequency CI and pre-commit hooks. |
+| **Full-table data quality frameworks** | Focus on row-level business assertions and data payload ingestion; too resource-intensive for high-frequency, metadata-only schema drift gating in CI and pre-commit hooks. |
 | **Ad-hoc Python Scripts** | Hand-rolled 50-line scripts in every repo; lack standardized backward compatibility rules, cannot handle nested structs/lists, no Markdown PR reporting. |
 | **`parquet-linter` (Rust)** | Focuses exclusively on compression, page size, and dictionary layout efficiency; does not validate semantic schema compatibility or partitioned directories. |
 | **DuckDB / Polars Direct Read** | Fails *at runtime* inside downstream jobs rather than *at commit/PR time*; cryptic C++ error messages without actionable diffs. |
@@ -181,6 +181,34 @@ audit_result = audit_dataset("data/partitions/**/*.parquet")
 ## 9. Error Handling & Security Boundaries
 
 - Corrupted footer files must fail gracefully with descriptive error messages without crashing the CLI.
-- No network requests during validation (100% offline, zero security exfiltration vector).
+- No network requests during standard validation (100% offline, zero security exfiltration vector).
 - Path traversal defense: validates and normalizes all relative file paths.
 - Path globs sanitized to prevent exponential regex explosion.
+
+---
+
+## 10. AI Subsystem Architecture & Trust Boundaries
+
+The `parquet_guard.ai` module provides optional schema intelligence, diagnostic explanations, migration planning, and evaluation utilities with non-negotiable trust boundaries:
+
+1. **Deterministic Verdict Authority**:
+   - The AI subsystem has zero authority to overturn or weaken deterministic CI/CD verdicts (`ResultState.INCOMPATIBLE`).
+   - If an AI provider attempts to assert a drift is non-breaking contrary to the deterministic compatibility engine, the invariant enforcement layer immediately reverts the verdict and flags the anomaly.
+
+2. **Zero Row-Data Leakage Guarantee**:
+   - Zero physical row records or cell values are ever read or transmitted.
+   - Only structural AST schemas, Arrow data types, nullabilities, metadata keys/values, and deterministic error codes are serialized.
+   - External HTTPS requests only occur when a remote provider (`--provider openai`) is explicitly configured with an API key.
+
+3. **Contract Evolution vs. Physical Data Migration**:
+   - `propose_contract_evolution` deterministically validates schema contract compatibility in memory.
+   - `generate_migration_plan` synthesizes executable PyArrow scripts for operator review and manual execution; Parquet Guard never executes unreviewed batch disk writes against production datasets.
+
+4. **Offline Evaluation vs. Live Frontier Models**:
+   - The 12 synthetic benchmark scenarios run under `--provider mock` evaluate offline harness integrity, XML finding parsing, citation validity, and fallback logic against deterministic ground truth.
+   - Live frontier model benchmarking requires explicit opt-in and live provider configuration.
+
+5. **Agent Tools vs. Full MCP Protocol**:
+   - `agent_tools.py` provides OpenAI-compatible tool definitions and an in-process Python execution dispatcher.
+   - It does not implement a standalone JSON-RPC Model Context Protocol (MCP) daemon.
+

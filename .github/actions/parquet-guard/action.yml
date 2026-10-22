@@ -1,0 +1,270 @@
+name: "Parquet Guard Schema Audit"
+description: "Zero-data-scan Parquet metadata schema audit, contract validation, and SARIF export for CI"
+author: "Parquet Guard Maintainers"
+
+inputs:
+  path:
+    description: "Target Parquet dataset directory, file path, or glob pattern"
+    required: true
+    default: "."
+  contract:
+    description: "Path to golden schema contract JSON file (optional)"
+    required: false
+    default: ""
+  mode:
+    description: "Validation mode: 'strict' (exact identity) or 'permissive' (safe additive/widening)"
+    required: false
+    default: "strict"
+  format:
+    description: "Console output format: 'text', 'markdown', 'json', or 'sarif'"
+    required: false
+    default: "text"
+  sarif-file:
+    description: "Destination file path to write SARIF 2.1.0 report (optional)"
+    required: false
+    default: "parquet-guard.sarif"
+  fail-on-warnings:
+    description: "Whether to fail CI when non-breaking warnings or schema drift are detected ('true' or 'false')"
+    required: false
+    default: "false"
+  install:
+    description: "Installation strategy: 'auto' (install if missing), 'true' (force install), or 'false' (skip)"
+    required: false
+    default: "auto"
+
+outputs:
+  verdict:
+    description: "Audit result verdict: VALID, DRIFTED, INCOMPATIBLE, or INSPECTION_ERROR"
+    value: ${{ steps.run-audit.outputs.verdict }}
+  sarif-file:
+    description: "Path to the generated SARIF report file (empty if not generated)"
+    value: ${{ steps.run-audit.outputs.sarif-file }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Run Parquet Guard Audit
+      id: run-audit
+      shell: bash
+      env:
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_CONTRACT: ${{ inputs.contract }}
+        INPUT_MODE: ${{ inputs.mode }}
+        INPUT_FORMAT: ${{ inputs.format }}
+        INPUT_SARIF_FILE: ${{ inputs.sarif-file }}
+        INPUT_FAIL_ON_WARNINGS: ${{ inputs.fail-on-warnings }}
+        INPUT_INSTALL: ${{ inputs.install }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        # 1. Input Validation
+        # Guard against workflow command / output injection via newline characters
+        for val in "$INPUT_PATH" "$INPUT_CONTRACT" "$INPUT_SARIF_FILE"; do
+          case "$val" in
+            *$'\n'*|*$'\r'*)
+              echo "::error::Input paths must not contain newline or carriage return characters."
+              exit 2
+              ;;
+          esac
+        done
+
+        case "$INPUT_MODE" in
+          strict|permissive) ;;
+          *)
+            echo "::error::Invalid mode. Allowed values are 'strict' or 'permissive'."
+            exit 2
+            ;;
+        esac
+
+        case "$INPUT_FORMAT" in
+          text|markdown|json|sarif) ;;
+          *)
+            echo "::error::Invalid format. Allowed values are 'text', 'markdown', 'json', or 'sarif'."
+            exit 2
+            ;;
+        esac
+
+        case "$INPUT_FAIL_ON_WARNINGS" in
+          true|false) ;;
+          *)
+            echo "::error::Invalid fail-on-warnings. Allowed values are 'true' or 'false'."
+            exit 2
+            ;;
+        esac
+
+        case "$INPUT_INSTALL" in
+          auto|true|false) ;;
+          *)
+            echo "::error::Invalid install option. Allowed values are 'auto', 'true', or 'false'."
+            exit 2
+            ;;
+        esac
+
+        # Normalize Windows backslashes for path inputs and environment variables
+        INPUT_PATH="${INPUT_PATH//\\//}"
+        INPUT_CONTRACT="${INPUT_CONTRACT//\\//}"
+
+        if [ -n "$GITHUB_OUTPUT" ] && command -v cygpath >/dev/null 2>&1; then
+          GITHUB_OUTPUT="$(cygpath -m "$GITHUB_OUTPUT")"
+        elif [ -n "$GITHUB_OUTPUT" ]; then
+          GITHUB_OUTPUT="${GITHUB_OUTPUT//\\//}"
+        fi
+
+        if [ -n "$ACTION_PATH" ] && command -v cygpath >/dev/null 2>&1; then
+          ACTION_PATH="$(cygpath -m "$ACTION_PATH")"
+        elif [ -n "$ACTION_PATH" ]; then
+          ACTION_PATH="${ACTION_PATH//\\//}"
+        fi
+
+        # Resolve Python interpreter (python3 on POSIX, python fallback on Windows)
+        PYTHON_BIN="${PYTHON:-}"
+        if [ -z "$PYTHON_BIN" ]; then
+          if command -v python3 >/dev/null 2>&1 && python3 -c "import sys" >/dev/null 2>&1; then
+            PYTHON_BIN="python3"
+          elif command -v python >/dev/null 2>&1 && python -c "import sys" >/dev/null 2>&1; then
+            PYTHON_BIN="python"
+          else
+            PYTHON_BIN="python3"
+          fi
+        fi
+
+        # 2. Prerequisite / Installation Check
+        CLI_CMD="parquet-guard"
+        REPO_ROOT="$(cd "$ACTION_PATH/../../.." && pwd)"
+        if command -v cygpath >/dev/null 2>&1; then
+          REPO_ROOT="$(cygpath -m "$REPO_ROOT")"
+        fi
+
+        if [ "$INPUT_INSTALL" = "true" ]; then
+          echo "Forced installation requested (install=true)..."
+          if [ -f "$REPO_ROOT/pyproject.toml" ]; then
+            "$PYTHON_BIN" -m pip install "$REPO_ROOT"
+          else
+            "$PYTHON_BIN" -m pip install parquet-guard
+          fi
+        elif [ "$INPUT_INSTALL" = "auto" ]; then
+          if ! command -v "$CLI_CMD" >/dev/null 2>&1; then
+            echo "parquet-guard not found in PATH; installing (install=auto)..."
+            if [ -f "$REPO_ROOT/pyproject.toml" ]; then
+              "$PYTHON_BIN" -m pip install "$REPO_ROOT"
+            else
+              "$PYTHON_BIN" -m pip install parquet-guard
+            fi
+          fi
+        elif [ "$INPUT_INSTALL" = "false" ]; then
+          if ! command -v "$CLI_CMD" >/dev/null 2>&1; then
+            echo "::error::parquet-guard executable not found and install=false."
+            exit 2
+          fi
+        fi
+
+        # 3. Execute Audit and Capture Results into Temp JSON
+        TMP_JSON="$(mktemp)"
+        if command -v cygpath >/dev/null 2>&1; then
+          TMP_JSON="$(cygpath -m "$TMP_JSON")"
+        fi
+        export TMP_JSON
+        trap 'rm -f "$TMP_JSON"' EXIT
+
+        AUDIT_ARGS=("audit" "$INPUT_PATH" "--mode" "$INPUT_MODE" "--format" "json" "--output" "$TMP_JSON")
+        if [ -n "$INPUT_CONTRACT" ]; then
+          AUDIT_ARGS+=("--contract" "$INPUT_CONTRACT")
+        fi
+
+        echo "Executing schema audit on: $INPUT_PATH (mode: $INPUT_MODE)"
+        AUDIT_EXIT_CODE=0
+        "$CLI_CMD" "${AUDIT_ARGS[@]}" >/dev/null 2>&1 || AUDIT_EXIT_CODE=$?
+
+        # 4. Extract Verdict and Diagnostics (safely via os.environ)
+        VERDICT=$("$PYTHON_BIN" -c '
+        import json, os, sys
+        path = os.environ.get("TMP_JSON")
+        if path and os.path.isfile(path) and os.path.getsize(path) > 0:
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                print(data.get("result_state", "INSPECTION_ERROR"))
+                sys.exit(0)
+            except Exception:
+                pass
+        print("INSPECTION_ERROR")
+        ' 2>/dev/null || echo "INSPECTION_ERROR")
+
+        if [ -n "$GITHUB_OUTPUT" ]; then
+          echo "verdict=$VERDICT" >> "$GITHUB_OUTPUT"
+        fi
+        echo "Audit Verdict: $VERDICT"
+
+        # 5. Output Console Presentation (safely via os.environ)
+        if [ "$INPUT_FORMAT" = "json" ]; then
+          cat "$TMP_JSON"
+        elif [ -f "$TMP_JSON" ] && [ -s "$TMP_JSON" ]; then
+          "$PYTHON_BIN" -c '
+        import json, os, sys
+        from parquet_guard.core.models import PartitionAuditResult
+        from parquet_guard.core.reporter import (
+            format_audit_markdown,
+            format_audit_sarif,
+            format_audit_terminal,
+        )
+
+        fmt = os.environ.get("INPUT_FORMAT", "text")
+        tmp_path = os.environ["TMP_JSON"]
+        try:
+            with open(tmp_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            res = PartitionAuditResult.model_validate(data)
+            if fmt == "sarif":
+                print(format_audit_sarif(res))
+            elif fmt == "markdown":
+                print(format_audit_markdown(res))
+            else:
+                print(format_audit_terminal(res))
+        except Exception as e:
+            print(f"Error rendering presentation: {e}", file=sys.stderr)
+        '
+        fi
+
+        # 6. Generate SARIF artifact if requested (safely via os.environ)
+        if [ -n "$INPUT_SARIF_FILE" ] && [ -f "$TMP_JSON" ] && [ -s "$TMP_JSON" ]; then
+          "$PYTHON_BIN" -c '
+        import json, os, sys
+        from pathlib import Path
+        from parquet_guard.core.models import PartitionAuditResult
+        from parquet_guard.core.reporter import format_audit_sarif
+
+        tmp_path = os.environ["TMP_JSON"]
+        sarif_target = os.environ["INPUT_SARIF_FILE"]
+
+        try:
+            with open(tmp_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            res = PartitionAuditResult.model_validate(data)
+            sarif_content = format_audit_sarif(res)
+
+            out_file = Path(sarif_target)
+            out_file.parent.mkdir(parents=True, exist_ok=True)
+            out_file.write_text(sarif_content, encoding="utf-8")
+        except Exception as e:
+            print(f"Error generating SARIF output: {e}", file=sys.stderr)
+            sys.exit(1)
+        '
+          if [ -n "$GITHUB_OUTPUT" ]; then
+            echo "sarif-file=$INPUT_SARIF_FILE" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Wrote SARIF 2.1.0 diagnostic report to: $INPUT_SARIF_FILE"
+        fi
+
+        # 7. Deterministic Exit Status (CI failure behavior)
+        if [ "$VERDICT" = "INCOMPATIBLE" ] || [ "$AUDIT_EXIT_CODE" -eq 1 ]; then
+          echo "::error::Parquet Guard audit failed with verdict: $VERDICT."
+          exit 1
+        elif [ "$VERDICT" = "DRIFTED" ] && [ "$INPUT_FAIL_ON_WARNINGS" = "true" ]; then
+          echo "::error::Parquet Guard audit detected schema drift with fail-on-warnings=true."
+          exit 1
+        elif [ "$VERDICT" = "INSPECTION_ERROR" ] || [ "$AUDIT_EXIT_CODE" -ge 2 ]; then
+          echo "::error::Parquet Guard encountered an inspection error or missing input."
+          exit 2
+        fi
+
+        echo "Parquet Guard audit passed successfully."
+        exit 0

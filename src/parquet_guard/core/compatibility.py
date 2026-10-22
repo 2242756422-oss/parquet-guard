@@ -24,9 +24,9 @@ SAFE_WIDENINGS: Dict[str, Set[str]] = {
     "int16": {"int32", "int64", "float32", "float64", "double"},
     "int32": {"int64", "float64", "double"},
     # Unsigned integers
-    "uint8": {"uint16", "uint32", "uint64", "int16", "int32", "int64"},
-    "uint16": {"uint32", "uint64", "int32", "int64"},
-    "uint32": {"uint64", "int64"},
+    "uint8": {"uint16", "uint32", "uint64", "int16", "int32", "int64", "float32", "float64", "double"},
+    "uint16": {"uint32", "uint64", "int32", "int64", "float32", "float64", "double"},
+    "uint32": {"uint64", "int64", "float64", "double"},
     # Floating point
     "float": {"double", "float64"},
     "float32": {"float64", "double"},
@@ -41,6 +41,10 @@ SAFE_WIDENINGS: Dict[str, Set[str]] = {
     "time32[s]": {"time32[ms]", "time64[us]", "time64[ns]"},
     "time32[ms]": {"time64[us]", "time64[ns]"},
     "time64[us]": {"time64[ns]"},
+    # Durations
+    "duration[s]": {"duration[ms]", "duration[us]", "duration[ns]"},
+    "duration[ms]": {"duration[us]", "duration[ns]"},
+    "duration[us]": {"duration[ns]"},
 }
 
 
@@ -115,8 +119,44 @@ def _parse_map_params(type_str: str) -> Optional[Tuple[str, str]]:
     return inner[:comma_pos].strip(), inner[comma_pos + 1 :].strip()
 
 
+def _is_temporal_widening(old_type: str, new_type: str) -> bool:
+    """Return True if transition is a timestamp or duration precision widening."""
+    ts_old = _parse_timestamp_params(old_type)
+    ts_new = _parse_timestamp_params(new_type)
+    if ts_old and ts_new:
+        return ts_old[0] != ts_new[0]
+
+    norm_old = _normalize_type_str(old_type)
+    norm_new = _normalize_type_str(new_type)
+    dur_m1 = re.match(r"^duration\[(s|ms|us|ns)\]$", norm_old)
+    dur_m2 = re.match(r"^duration\[(s|ms|us|ns)\]$", norm_new)
+    if dur_m1 and dur_m2:
+        return dur_m1.group(1) != dur_m2.group(1)
+
+    return False
+
+
 def is_safe_widening(old_type: str, new_type: str) -> bool:
-    """Return True if transitioning from old_type to new_type is safely lossless."""
+    """Return True if transitioning from old_type to new_type is safely lossless.
+
+    API Contract Note:
+    `is_safe_widening` evaluates unidirectional algebraic type promotion (e.g.,
+    int32 -> int64, float32 -> float64, timestamp[s] -> timestamp[ns],
+    duration[s] -> duration[ns]). While finer temporal units algebraically increase
+    precision without truncation, physical signed int64 storage bounds their
+    representable time range:
+    - Nanosecond timestamps: 1677-09-21 to 2262-04-11 AD.
+    - Nanosecond durations: ±292.27 years (±9,223,372,036 seconds).
+
+    Because zero-data-scan schema inspection cannot verify individual row values
+    without reading the full Parquet payload, `analyze_compatibility` handles temporal
+    widening separately:
+    - In `strict` mode: temporal widening is rejected as `Severity.BREAKING`
+      (ErrorCode.TYPE_WIDENED).
+    - In `permissive` mode: temporal widening is flagged as `Severity.WARNING`
+      with `ErrorCode.TEMPORAL_OVERFLOW_RISK` and recommendations to verify the
+      dataset temporal bounds.
+    """
     norm_old = _normalize_type_str(old_type)
     norm_new = _normalize_type_str(new_type)
 
@@ -139,6 +179,17 @@ def is_safe_widening(old_type: str, new_type: str) -> bool:
         if tz_old == tz_new and u_old in units and u_new in units:
             if units.index(u_new) >= units.index(u_old):
                 return True
+        return False
+
+    # 2b. Duration compatibility: safe precision widening s -> ms -> us -> ns
+    dur_m1 = re.match(r"^duration\[(s|ms|us|ns)\]$", norm_old)
+    dur_m2 = re.match(r"^duration\[(s|ms|us|ns)\]$", norm_new)
+    if dur_m1 and dur_m2:
+        units = ["s", "ms", "us", "ns"]
+        u1 = dur_m1.group(1)
+        u2 = dur_m2.group(1)
+        if units.index(u2) >= units.index(u1):
+            return True
         return False
 
     # 3. Decimal compatibility
@@ -173,7 +224,17 @@ def is_safe_widening(old_type: str, new_type: str) -> bool:
     return False
 
 
-CONTAINER_KINDS = {"struct", "list", "large_list", "fixed_size_list", "map", "dictionary"}
+CONTAINER_KINDS = {
+    "struct",
+    "list",
+    "large_list",
+    "fixed_size_list",
+    "map",
+    "dictionary",
+    "union",
+    "dense_union",
+    "sparse_union",
+}
 
 
 def get_container_kind(type_str: str) -> Optional[str]:
@@ -191,6 +252,8 @@ def get_container_kind(type_str: str) -> Optional[str]:
         return "map"
     if norm.startswith("dictionary"):
         return "dictionary"
+    if norm.startswith("dense_union") or norm.startswith("sparse_union") or norm.startswith("union"):
+        return "union"
     return None
 
 
@@ -201,6 +264,8 @@ def analyze_compatibility(
     check_metadata: bool = True,
     check_field_order: bool = False,
     field_path: str = "",
+    depth: int = 0,
+    max_depth: int = 100,
 ) -> List[FieldDiff]:
     """Analyze discrepancies between two field definitions and return identified diffs.
 
@@ -211,9 +276,27 @@ def analyze_compatibility(
         check_metadata: Whether to check field metadata changes.
         check_field_order: Whether to enforce/report child field order in nested containers.
         field_path: Hierarchical field path for nested reporting (e.g. 'user.address.zip').
+        depth: Current schema nesting depth.
+        max_depth: Maximum supported schema nesting depth before aborting.
     """
     diffs: List[FieldDiff] = []
     curr_path = field_path if field_path else old_field.name
+
+    if depth > max_depth:
+        diffs.append(
+            FieldDiff(
+                field_name=curr_path,
+                field_path=curr_path,
+                change_type=ChangeType.TYPE_MISMATCH,
+                severity=Severity.BREAKING,
+                error_code=ErrorCode.TYPE_MISMATCH,
+                old_value=old_field.type,
+                new_value=new_field.type,
+                description=f"Field '{curr_path}' exceeded maximum schema recursion depth limit ({max_depth}).",
+                recommendation="Refactor deeply nested or cyclic schema structure.",
+            )
+        )
+        return diffs
 
     old_container = get_container_kind(old_field.type)
     new_container = get_container_kind(new_field.type)
@@ -434,29 +517,86 @@ def analyze_compatibility(
             )
         elif _normalize_type_str(old_field.type) != _normalize_type_str(new_field.type):
             if is_safe_widening(old_field.type, new_field.type):
-                sev = Severity.BREAKING if mode == "strict" else Severity.SAFE
+                if _is_temporal_widening(old_field.type, new_field.type):
+                    # Temporal precision widening (e.g. s -> ms -> us -> ns):
+                    # Finer units restrict the dynamic range in int64. Zero-data-scan schema inspection
+                    # cannot guarantee value-level safety without reading raw data.
+                    # Strict mode: BREAKING; Permissive mode: WARNING with explicit overflow risk.
+                    sev = Severity.BREAKING if mode == "strict" else Severity.WARNING
+                    err_code = (
+                        ErrorCode.TYPE_WIDENED if mode == "strict" else ErrorCode.TEMPORAL_OVERFLOW_RISK
+                    )
+                    desc = (
+                        f"Field '{curr_path}' temporal precision widened from '{old_field.type}' to '{new_field.type}' "
+                        f"(type widening is strictly forbidden in strict mode)."
+                        if mode == "strict"
+                        else (
+                            f"Field '{curr_path}' temporal precision widened from '{old_field.type}' to '{new_field.type}'. "
+                            f"WARNING: Schema-only metadata validation cannot guarantee value-level safety without full data scan. "
+                            f"Finer units reduce the representable range in signed int64 (e.g. 'ns' timestamps overflow outside "
+                            f"1677-2262 AD, and 'ns' durations overflow beyond ±292 years). Downstream casting of out-of-range "
+                            f"values will fail with ArrowInvalid."
+                        )
+                    )
+                    rec = (
+                        f"Keep field type as '{old_field.type}' to satisfy strict schema contract."
+                        if mode == "strict"
+                        else (
+                            "Verify that all partition values reside strictly within the narrower dynamic range of the target "
+                            "temporal unit before promoting reader schemas, or retain the coarser unit in your contract."
+                        )
+                    )
+                    diffs.append(
+                        FieldDiff(
+                            field_name=curr_path,
+                            field_path=curr_path,
+                            change_type=ChangeType.TYPE_WIDENED,
+                            severity=sev,
+                            error_code=err_code,
+                            old_value=old_field.type,
+                            new_value=new_field.type,
+                            description=desc,
+                            recommendation=rec,
+                        )
+                    )
+                else:
+                    sev = Severity.BREAKING if mode == "strict" else Severity.SAFE
+                    diffs.append(
+                        FieldDiff(
+                            field_name=curr_path,
+                            field_path=curr_path,
+                            change_type=ChangeType.TYPE_WIDENED,
+                            severity=sev,
+                            error_code=ErrorCode.TYPE_WIDENED,
+                            old_value=old_field.type,
+                            new_value=new_field.type,
+                            description=(
+                                f"Field '{curr_path}' type changed from '{old_field.type}' to '{new_field.type}' "
+                                + (
+                                    "(type widening is strictly forbidden in strict mode)."
+                                    if mode == "strict"
+                                    else "(safely widened)."
+                                )
+                            ),
+                            recommendation=(
+                                f"Keep field type as '{old_field.type}' to satisfy strict schema contract."
+                                if mode == "strict"
+                                else "No action required. Downstream readers supporting promotion will read seamlessly."
+                            ),
+                        )
+                    )
+            elif is_safe_widening(new_field.type, old_field.type):
                 diffs.append(
                     FieldDiff(
                         field_name=curr_path,
                         field_path=curr_path,
-                        change_type=ChangeType.TYPE_WIDENED,
-                        severity=sev,
-                        error_code=ErrorCode.TYPE_WIDENED,
+                        change_type=ChangeType.TYPE_NARROWED,
+                        severity=Severity.BREAKING,
+                        error_code=ErrorCode.TYPE_NARROWED,
                         old_value=old_field.type,
                         new_value=new_field.type,
-                        description=(
-                            f"Field '{curr_path}' type changed from '{old_field.type}' to '{new_field.type}' "
-                            + (
-                                "(type widening is strictly forbidden in strict mode)."
-                                if mode == "strict"
-                                else "(safely widened)."
-                            )
-                        ),
-                        recommendation=(
-                            f"Keep field type as '{old_field.type}' to satisfy strict schema contract."
-                            if mode == "strict"
-                            else "No action required. Downstream readers supporting promotion will read seamlessly."
-                        ),
+                        description=f"Field '{curr_path}' type narrowed from '{old_field.type}' to '{new_field.type}'.",
+                        recommendation=f"Avoid narrowing type from '{old_field.type}' to '{new_field.type}' to prevent loss of precision or integer truncation.",
                     )
                 )
             else:
@@ -579,6 +719,8 @@ def analyze_compatibility(
                     check_metadata=check_metadata,
                     check_field_order=check_field_order,
                     field_path=child_path,
+                    depth=depth + 1,
+                    max_depth=max_depth,
                 )
                 diffs.extend(child_diffs)
 

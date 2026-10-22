@@ -7,7 +7,7 @@
 [![SARIF 2.1.0](https://img.shields.io/badge/SARIF-2.1.0%20Compliant-purple.svg)](https://docs.github.com/en/code-security/code-scanning)
 [![Zero Data Scan](https://img.shields.io/badge/I%2FO-Zero--Data--Scan-orange.svg)](#architecture)
 
-> **Alpha Release Notice**: `parquet-guard` is currently classified as **Alpha (`v0.2.0-alpha`)**. It is functionally verified with 70 automated tests, strict Ruff/Mypy type compliance, and standard packaging, but community adoption and long-term production hardening are ongoing.
+> **Alpha Release Notice**: `parquet-guard` is currently classified as **Alpha (`v0.2.0-alpha`)**. It is functionally verified with 104 automated tests, strict Ruff/Mypy type compliance, standard packaging, and reproducible AI evaluation benchmarks, but community adoption and long-term production hardening are ongoing.
 
 **High-performance, zero-data-scan Parquet schema contract & drift detection guard with experimental incremental caching and SARIF reporting for data pipelines, MLOps, and CI/CD.**
 
@@ -24,7 +24,7 @@ In modern data engineering and AI training pipelines, Apache Parquet is the ubiq
 - A FixedSizeList length changes (e.g., embedding vector `fixed_size_list<float32>[512]` to `[768]`), causing matrix math kernels or tensor loaders to crash.
 - A Map's `keys_sorted` attribute changes or Dictionary `ordered` flag flips, breaking binary search optimizations in query engines.
 - A newly deployed worker writes a partitioned directory (`date=2026-10-22`) with an extra column, causing downstream federated queries across partitions to fail.
-- Existing validation tools (like Great Expectations or Soda) require **scanning entire gigabyte-scale datasets into memory**, making them too slow and expensive for pre-commit hooks and pull request CI.
+- Validating schemas via full data payload ingestion (`pq.read_table`) scales with total data volume, whereas `parquet-guard` inspects the 2KB–20KB Parquet footer without reading row data into memory.
 
 `parquet-guard` solves this by inspecting **only the Parquet metadata footer (typically 2KB–20KB)**. It performs comprehensive structural compatibility checks and multi-partition consistency audits in **sub-millisecond timeframes**.
 
@@ -42,6 +42,7 @@ In modern data engineering and AI training pipelines, Apache Parquet is the ubiq
   - Timestamp resolution and timezone shifts (`TIMESTAMP_TIMEZONE_MISMATCH`).
   - Deep nested Struct and List child fields with ordering and metadata retention.
 - **🔒 Golden Schema Contracts**: Export, enforce, and strictly validate declarative `.parquet-guard.json` contracts (`validate-contract`, `check`).
+- **🤖 Evidence-Grounded AI Schema Evolution Copilot**: Optional AI diagnostic and planning subsystem (`explain`, `propose-migration`, `eval-ai`). Cites deterministic finding IDs (`F001`, `F002`), evaluates DuckDB/PyArrow/Spark operational consequences, and generates deterministically validated migration plans with zero raw data leaks and zero CI verdict override authority.
 - **🛡️ SARIF 2.1.0 Native Integration**: Emits OASIS SARIF 2.1.0 reports (`--format sarif`), integrating directly into GitHub Code Scanning and security alerts.
 - **🗂️ Deterministic Partition Drift Auditor**: Recursively scans partitioned trees or globs to ensure 100% schema consistency across partitioned datasets with permutation invariance.
 - **💬 GitHub PR Automation**: Generates clean Markdown reports with status badges and collapsible diff tables, perfect for automated PR comments.
@@ -122,6 +123,52 @@ parquet-guard audit "data/lake/events/**/*.parquet" --mode strict
 parquet-guard audit "data/lake/events/**/*.parquet" --format sarif --output audit.sarif
 ```
 
+### 6. AI-Assisted Schema Drift Diagnosis (`explain`)
+Generate an evidence-grounded diagnosis citing exact structural findings and downstream engine impact:
+```bash
+# Offline deterministic explanation (no API key required)
+parquet-guard explain data/new_batch.parquet -c contracts/events.schema.json
+
+# Markdown output for GitHub PR comments
+parquet-guard explain data/new_batch.parquet -c contracts/events.schema.json --format markdown
+
+# With live OpenAI provider (requires OPENAI_API_KEY)
+parquet-guard explain data/new_batch.parquet -c contracts/events.schema.json --provider openai --model gpt-4o-mini
+```
+
+### 7. Contract Evolution & Migration Planning (`propose-migration`)
+Generate a proposed contract update and executable PyArrow transformation code:
+```bash
+parquet-guard propose-migration data/new_batch.parquet -c contracts/events.schema.json --save-contract contracts/events.v2.json
+```
+
+### 8. Reproducible AI Benchmark Evaluation (`eval-ai`)
+Run the 12-scenario synthetic evaluation benchmark measuring finding identification, citation validity, and prompt-injection defense:
+```bash
+parquet-guard eval-ai --provider mock
+```
+
+> **Evaluation Classification Note**: The default `--provider mock` suite measures offline test harness integrity, XML prompt parsing, citation-id validation, and fallback logic against deterministic baselines. It does **not** evaluate live frontier model reasoning capabilities (which requires configuring an active remote provider and API key).
+
+---
+
+## 🔒 Architectural Boundaries & Privacy Model
+
+To ensure absolute clarity for enterprise and compliance reviewers, `parquet-guard` maintains strict boundaries across all subsystems:
+
+### 1. Privacy & Data Transmission Boundary
+- **Zero Raw Row Data Access**: `parquet-guard` never reads, buffers, or transmits table rows, record contents, or cell values.
+- **Schema Metadata Disclosure**: When and only when a remote provider is explicitly configured (e.g., `--provider openai`), schema structural metadata (field names, Arrow data types, nullability flags, field/schema metadata keys/values, deterministic error codes, finding descriptions, and optional user context) is serialized into prompt payloads and transmitted via HTTPS to the user-specified provider endpoint.
+- **Offline by Default**: In default operation (`check`, `diff`, `audit`, `inspect`), and when using the offline deterministic explainer or `--provider mock`, zero network requests are initiated.
+
+### 2. Contract Schema Validation vs. Physical Data Migration
+- **Schema Contract Validation**: Operations such as `validate-contract`, `check`, and `propose_contract_evolution` perform in-memory deterministic AST validation, ensuring that a target schema satisfies a declarative contract without breaking changes.
+- **Physical Migration Script Generation**: The `propose-migration` command generates runnable Python/PyArrow transformation code for pipeline operators to review. `parquet-guard` does **not** physically rewrite, mutate, or migrate production data partitions on disk without manual execution by an authorized operator.
+
+### 3. Agent Tool Calling vs. MCP Daemon
+- **Agent Interoperability**: `parquet_guard.ai.agent_tools` provides OpenAI-compatible function-calling schemas (`AGENT_TOOL_DEFINITIONS`) and an in-process tool dispatcher (`call_agent_tool`).
+- **Protocol Distinction**: This module provides an agent tool interface for integration into existing agent runtimes; it is **not** a standalone Model Context Protocol (MCP) JSON-RPC stdio/SSE server daemon.
+
 ---
 
 ## 🐍 Python API
@@ -157,7 +204,7 @@ print(f"Audit completed: {result.total_files_scanned} files (Cache hits: {result
 
 ## 🤖 GitHub Actions CI Workflow
 
-Add `parquet-guard` to your repository's `.github/workflows/data-quality.yml`:
+Use the official composite GitHub Action (`.github/actions/parquet-guard`):
 
 ```yaml
 name: Parquet Schema Guard & Code Scanning
@@ -184,24 +231,23 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install parquet-guard
-        run: pip install parquet-guard
+      # Audit dataset partitions, emit SARIF report, and export verdict
+      - name: Audit Schema Consistency
+        id: parquet_guard
+        uses: 2242756422-oss/parquet-guard/.github/actions/parquet-guard@main
+        with:
+          path: 'fixtures/'
+          contract: 'contracts/events.schema.json'
+          mode: 'permissive'
+          sarif-file: 'parquet-guard.sarif'
+          fail-on-warnings: 'false'
 
-      - name: Validate Contract File
-        run: parquet-guard validate-contract contracts/events.schema.json
-
-      - name: Validate Parquet Fixtures & Generate SARIF
-        run: |
-          parquet-guard check fixtures/sample.parquet \
-            --contract contracts/events.schema.json \
-            --format sarif \
-            --output results.sarif || true
-
+      # Upload SARIF diagnostic report even if breaking changes occurred
       - name: Upload SARIF to GitHub Code Scanning
         uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
-          sarif_file: results.sarif
+          sarif_file: parquet-guard.sarif
           category: parquet-guard
 ```
 
@@ -209,28 +255,28 @@ jobs:
 
 ## 📊 Benchmark & Performance
 
-Empirical measurements on macOS arm64 (Apple Silicon, Python 3.13, PyArrow 21.0.0) executed via [`benchmarks/fair_benchmark.py`](benchmarks/fair_benchmark.py):
+Empirical measurements on macOS arm64 (Apple Silicon, Python 3.13.9, PyArrow 21.0.0) executed via [`benchmarks/fair_benchmark.py`](benchmarks/fair_benchmark.py) with 5 warmup rounds and repeated statistical sampling:
 
-### 1. Single File Schema Inspection (10,000 rows, 7 columns)
-| Method | Latency | Overhead vs Bare C++ |
-| :--- | :---: | :---: |
-| **PyArrow C++ Raw (`ParquetFile.schema_arrow`)** | **0.125 ms** | Baseline |
-| **`parquet-guard inspect_schema`** (Pydantic Contract AST) | **0.135 ms** | **+0.010 ms** |
-| **Full Data Scan (`pq.read_table`)** | **6.196 ms** | ~46x slower (scales with file size) |
+### 1. Single File Schema Inspection (10,000 rows, 7 columns, 30 repetitions)
+| Method | Mean Latency | Median | Std Dev | Description |
+| :--- | :---: | :---: | :---: | :--- |
+| **PyArrow C++ Raw (`ParquetFile.schema_arrow`)** | **0.058 ms** | 0.050 ms | 0.026 ms | Bare C++ footer read |
+| **`parquet-guard inspect_schema`** (Pydantic AST) | **0.087 ms** | 0.080 ms | 0.018 ms | Footer read + Pydantic SchemaContract AST |
+| **Full Data Scan (`pq.read_table`)** | **0.549 ms** | 0.524 ms | 0.067 ms | Reads all columns & rows into memory |
 
-*`parquet-guard` adds negligible (~10 microseconds) overhead over raw C++ footer parsing to construct typed Pydantic models with container attributes, metadata, and validation.*
+*Note: Comparing metadata footer inspection with `pq.read_table` illustrates the architectural difference between metadata-only extraction (~10KB footer) and full-data payload ingestion; it is not an assertion of superiority over other metadata-based schema tools.*
 
-### 2. Multi-Partition Dataset Auditing (`parquet-guard audit`)
-| Partitions | Total Size | Cold Run | Hot Full Audit (Mean 10x) | Incremental Cached Audit | Manual Full Table Scan |
+### 2. Multi-Partition Dataset Auditing (`parquet-guard audit`, 15 repetitions)
+| Partitions | Total Size | Cold Run | Hot Full Audit (Mean) | Hot Incremental Audit | Full Payload Scan (`pq.read_table`) |
 | :---: | :---: | :---: | :---: | :---: | :---: |
-| **10 partitions** | 2.39 MB | 3.82 ms | **2.01 ms** (0.20 ms/file) | **1.10 ms** (0.11 ms/file) | 5.22 ms |
-| **50 partitions** | 12.01 MB | 12.95 ms | **9.11 ms** (0.18 ms/file) | **3.30 ms** (0.066 ms/file) | 24.94 ms |
-| **100 partitions** | 24.04 MB | 19.61 ms | **18.44 ms** (0.18 ms/file) | **5.95 ms** (0.060 ms/file) | 52.88 ms |
+| **10 partitions** | 2.39 MB | 3.23 ms | **2.11 ms** (±0.14 ms) | **1.04 ms** (±0.13 ms) | 6.79 ms (±3.16 ms) |
+| **50 partitions** | 12.01 MB | 10.26 ms | **9.50 ms** (±0.10 ms) | **3.42 ms** (±0.17 ms) | 26.34 ms (±0.30 ms) |
+| **100 partitions** | 24.04 MB | 21.01 ms | **19.61 ms** (±0.50 ms) | **5.96 ms** (±0.20 ms) | 52.38 ms (±0.83 ms) |
 
 ### Architectural Insight: Footer I/O vs Full Data Scan
-- **Full Data Scan (`pq.read_table`)**: Reads dictionary pages, data pages, decompresses Snappy/ZSTD blocks, and constructs Arrow memory buffers. Scaling is $O(\text{Data Volume})$.
-- **`parquet-guard` Cold Audit**: Seeks to the file footer (typically last 4KB-16KB of file) using `pq.ParquetFile`. Scaling is $O(N)$ with partition file count, completely independent of table row count.
-- **`parquet-guard` Incremental Audit**: Evaluates `(mtime_ns, file_size_bytes)` against `.parquet_guard_cache.json`. When unchanged, avoids disk seeks entirely and achieves up to **3.1x speedup** over cold full audits.
+- **Full Data Scan (`pq.read_table`)**: Reads dictionary pages, data pages, decompresses Snappy blocks, and constructs Arrow memory buffers. Scaling is $O(\text{Data Volume})$.
+- **`parquet-guard` Cold Audit**: Seeks to the file footer (typically last 4KB-16KB of file) using `pq.ParquetFile`. Scaling is $O(N)$ with partition file count, independent of table row count.
+- **`parquet-guard` Incremental Audit**: Evaluates `(mtime_ns, file_size_bytes)` against `.parquet_guard_cache.json`. When unchanged, avoids disk seeks entirely and achieves up to **2.9x speedup** over hot full audits.
 
 ---
 
@@ -238,7 +284,8 @@ Empirical measurements on macOS arm64 (Apple Silicon, Python 3.13, PyArrow 21.0.
 
 1. **Local and Mounted Filesystems**: Direct streaming inspection over S3/GCS/Azure without downloading is on the roadmap for v0.3.0. Currently, remote buckets must be mounted (e.g., via s3fs or Cloud Storage FUSE) or downloaded locally.
 2. **Experimental Incremental Cache**: The incremental cache relies on filesystem modification times (`mtime_ns`) and file sizes. In CI runners where repository clones do not preserve timestamps, use `--force-full` or standard audit.
-3. **In-Memory Partition Manifests**: Pydantic models for partition reports and contracts are held in process memory. Datasets with tens of thousands of partitions run comfortably, but million-file datasets require batching.
+3. **Temporal Unit Precision vs. Range**: Finer temporal units (`s -> ms -> us -> ns`) increase precision but decrease representable dynamic range in signed 64-bit integer format (e.g. `timestamp[ns]` is limited to 1677–2262 AD, and `duration[ns]` to ±292 years). Zero-data-scan schema inspection cannot verify whether row values exceed this range without data scans; in permissive mode, this generates a `TEMPORAL_OVERFLOW_RISK` warning.
+4. **In-Memory Partition Manifests**: Pydantic models for partition reports and contracts are held in process memory. Datasets with tens of thousands of partitions run comfortably, but million-file datasets require batching.
 
 ---
 
@@ -256,7 +303,7 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 
-# 3. Run automated test suite (70 tests, 100% passing)
+# 3. Run automated test suite (104 tests, 100% passing)
 pytest tests/ -v
 
 # 4. Run static type checking and linters
@@ -267,7 +314,10 @@ mypy --explicit-package-bases src tests examples benchmarks
 # 5. Run fair empirical benchmark suite
 python benchmarks/fair_benchmark.py
 
-# 6. Verify distribution build
+# 6. Run reproducible AI evaluation benchmark suite
+parquet-guard eval-ai --provider mock
+
+# 7. Verify distribution build
 python -m build
 ```
 

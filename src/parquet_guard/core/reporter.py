@@ -82,6 +82,13 @@ SARIF_RULES: List[Dict[str, Any]] = [
         "shortDescription": {"text": "Timestamp timezone attribute mismatch"},
     },
     {
+        "id": "TEMPORAL_OVERFLOW_RISK",
+        "name": "TemporalOverflowRisk",
+        "shortDescription": {
+            "text": "Finer timestamp or duration precision reduces dynamic range causing latent overflow risk"
+        },
+    },
+    {
         "id": "SCHEMA_DIVERGENT",
         "name": "SchemaDivergent",
         "shortDescription": {"text": "Partition schema incompatible with baseline contract"},

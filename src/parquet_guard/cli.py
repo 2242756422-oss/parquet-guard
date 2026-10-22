@@ -416,5 +416,272 @@ def audit_cmd(
         sys.exit(2)
 
 
+@main.command("explain")
+@click.argument("target_path", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "-c",
+    "--contract",
+    "contract_path",
+    type=click.Path(exists=True, dir_okay=False),
+    help="Path to baseline SchemaContract JSON file.",
+)
+@click.option(
+    "-b",
+    "--baseline",
+    "baseline_path",
+    type=click.Path(exists=True, dir_okay=False),
+    help="Alternative baseline Parquet file path.",
+)
+@click.option(
+    "-m",
+    "--mode",
+    type=click.Choice(["permissive", "strict"]),
+    default="permissive",
+    show_default=True,
+    help="Validation mode: permissive allows safe widening; strict enforces exact identity.",
+)
+@click.option(
+    "-p",
+    "--provider",
+    type=click.Choice(["auto", "mock", "openai"]),
+    default="auto",
+    show_default=True,
+    help="AI inference provider.",
+)
+@click.option("--model", default=None, help="Custom model ID (e.g. 'gpt-4o-mini').")
+@click.option(
+    "-f",
+    "--format",
+    "fmt",
+    type=click.Choice(["text", "markdown", "json"]),
+    default="text",
+    show_default=True,
+    help="Output format.",
+)
+@click.option("--context", default=None, help="Optional pipeline context to guide diagnosis.")
+@click.option(
+    "--fallback/--no-fallback",
+    default=True,
+    show_default=True,
+    help="Fall back to deterministic rule engine if AI provider is unavailable.",
+)
+@click.option("-o", "--output", "out_file", type=click.Path(dir_okay=False), help="Save report to file.")
+def explain_cmd(
+    target_path: str,
+    contract_path: Optional[str],
+    baseline_path: Optional[str],
+    mode: str,
+    provider: str,
+    model: Optional[str],
+    fmt: str,
+    context: Optional[str],
+    fallback: bool,
+    out_file: Optional[str],
+) -> None:
+    """Diagnose schema drift with evidence-grounded AI assistance."""
+    if not contract_path and not baseline_path:
+        click.secho("Error: Must provide either --contract (-c) or --baseline (-b).", fg="red", err=True)
+        sys.exit(2)
+
+    try:
+        from parquet_guard.ai.explainer import (
+            diagnose_schema_drift,
+            format_diagnosis_json,
+            format_diagnosis_markdown,
+            format_diagnosis_terminal,
+        )
+        from parquet_guard.ai.providers import get_provider
+
+        target_schema = inspect_schema(target_path)
+        if contract_path:
+            baseline_schema = load_contract(contract_path)
+        else:
+            baseline_schema = inspect_schema(str(baseline_path))
+
+        diff_report = compare_schemas(target_schema, baseline_schema, mode=mode)
+        ai_provider = get_provider(provider_type=provider, model_id=model)
+
+        diagnosis = diagnose_schema_drift(
+            diff_report,
+            provider=ai_provider,
+            user_context=context,
+            allow_fallback=fallback,
+        )
+
+        if fmt == "markdown":
+            output_str = format_diagnosis_markdown(diagnosis)
+        elif fmt == "json":
+            output_str = format_diagnosis_json(diagnosis)
+        else:
+            output_str = format_diagnosis_terminal(diagnosis)
+
+        if out_file:
+            Path(out_file).write_text(output_str, encoding="utf-8")
+            click.echo(f"Diagnosis written to '{out_file}'.")
+        else:
+            click.echo(output_str)
+
+        sys.exit(1 if diagnosis.is_blocking_ci else 0)
+
+    except Exception as exc:
+        click.secho(f"Error executing AI diagnosis: {exc}", fg="red", err=True)
+        sys.exit(2)
+
+
+@main.command("propose-migration")
+@click.argument("target_path", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "-c",
+    "--contract",
+    "contract_path",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Path to existing baseline SchemaContract JSON file.",
+)
+@click.option(
+    "-m",
+    "--mode",
+    type=click.Choice(["permissive", "strict"]),
+    default="permissive",
+    show_default=True,
+    help="Compatibility mode for proposed contract.",
+)
+@click.option(
+    "-f",
+    "--format",
+    "fmt",
+    type=click.Choice(["text", "markdown", "json"]),
+    default="text",
+    show_default=True,
+    help="Report output format.",
+)
+@click.option(
+    "--save-contract",
+    type=click.Path(dir_okay=False),
+    default=None,
+    help="Optional path to save the proposed new SchemaContract JSON.",
+)
+@click.option(
+    "-o", "--output", "out_file", type=click.Path(dir_okay=False), help="Save migration plan to file."
+)
+def propose_migration_cmd(
+    target_path: str,
+    contract_path: str,
+    mode: str,
+    fmt: str,
+    save_contract: Optional[str],
+    out_file: Optional[str],
+) -> None:
+    """Generate contract evolution proposal and executable PyArrow migration plan."""
+    try:
+        from parquet_guard.ai.planner import (
+            format_migration_json,
+            format_migration_markdown,
+            generate_migration_plan,
+        )
+
+        target_schema = inspect_schema(target_path)
+        baseline_schema = load_contract(contract_path)
+
+        plan = generate_migration_plan(baseline_schema, target_schema)
+
+        if save_contract and plan.contract_proposal:
+            from parquet_guard.core.inspector import save_contract as persist_contract
+
+            persist_contract(plan.contract_proposal.proposed_contract, save_contract)
+            click.secho(f"Saved proposed contract to '{save_contract}'.", fg="green")
+
+        if fmt == "markdown":
+            output_str = format_migration_markdown(plan)
+        elif fmt == "json":
+            output_str = format_migration_json(plan)
+        else:
+            output_str = format_migration_markdown(plan)
+
+        if out_file:
+            Path(out_file).write_text(output_str, encoding="utf-8")
+            click.echo(f"Migration plan written to '{out_file}'.")
+        else:
+            click.echo(output_str)
+
+        sys.exit(0)
+
+    except Exception as exc:
+        click.secho(f"Error generating migration plan: {exc}", fg="red", err=True)
+        sys.exit(2)
+
+
+@main.command("eval-ai")
+@click.option(
+    "-p",
+    "--provider",
+    type=click.Choice(["auto", "mock", "openai"]),
+    default="auto",
+    show_default=True,
+    help="AI inference provider to evaluate.",
+)
+@click.option("--model", default=None, help="Custom model ID.")
+@click.option(
+    "-f",
+    "--format",
+    "fmt",
+    type=click.Choice(["text", "markdown", "json"]),
+    default="text",
+    show_default=True,
+    help="Output report format.",
+)
+@click.option(
+    "-o", "--output", "out_file", type=click.Path(dir_okay=False), help="Save evaluation report to file."
+)
+def eval_ai_cmd(
+    provider: str,
+    model: Optional[str],
+    fmt: str,
+    out_file: Optional[str],
+) -> None:
+    """Run reproducible benchmark evaluation across synthetic schema evolution scenarios."""
+    try:
+        from parquet_guard.ai.evaluator import (
+            format_evaluation_markdown,
+            run_evaluation_suite,
+        )
+        from parquet_guard.ai.providers import get_provider
+
+        ai_provider = get_provider(provider_type=provider, model_id=model)
+        click.secho(f"Evaluating provider: {provider} (model: {model or 'default'})...", fg="cyan")
+
+        report = run_evaluation_suite(
+            provider=ai_provider,
+            progress_callback=lambda name, cur, tot: click.echo(f"  [{cur}/{tot}] Evaluating: {name}"),
+        )
+
+        if fmt == "json":
+            output_str = report.model_dump_json(indent=2)
+        else:
+            output_str = format_evaluation_markdown(report)
+
+        if out_file:
+            Path(out_file).write_text(output_str, encoding="utf-8")
+            click.echo(f"Evaluation report written to '{out_file}'.")
+        else:
+            click.echo(output_str)
+
+        click.secho(
+            f"\nEvaluation Complete: {report.passed_scenarios}/{report.total_scenarios} passed "
+            f"({report.pass_rate}%). Factual consistency: {report.factual_consistency_rate * 100:.1f}%.",
+            fg="green" if report.pass_rate >= 80.0 else "yellow",
+        )
+        if provider == "mock":
+            click.secho(
+                "Notice: Mock provider scores verify test harness, parsing, and contract consistency (offline simulation, not live LLM reasoning).",
+                dim=True,
+            )
+        sys.exit(0)
+
+    except Exception as exc:
+        click.secho(f"Error running AI evaluation: {exc}", fg="red", err=True)
+        sys.exit(2)
+
+
 if __name__ == "__main__":
     main()
