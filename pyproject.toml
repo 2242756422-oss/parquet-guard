@@ -45,10 +45,10 @@ dev = [
 parquet-guard = "parquet_guard.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/liujingye/parquet-guard"
-Repository = "https://github.com/liujingye/parquet-guard"
-Issues = "https://github.com/liujingye/parquet-guard/issues"
-Changelog = "https://github.com/liujingye/parquet-guard/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/2242756422-oss/parquet-guard"
+Repository = "https://github.com/2242756422-oss/parquet-guard"
+Issues = "https://github.com/2242756422-oss/parquet-guard/issues"
+Changelog = "https://github.com/2242756422-oss/parquet-guard/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/parquet_guard"]
