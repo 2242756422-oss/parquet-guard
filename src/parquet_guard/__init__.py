@@ -6,6 +6,8 @@ MLOps feature stores, and CI/CD pull request validation.
 
 from __future__ import annotations
 
+# ruff: noqa: I001
+
 from parquet_guard.core.auditor import audit_dataset, compute_schema_fingerprint
 from parquet_guard.core.cache import (
     CachedFileInfo,
@@ -47,6 +49,12 @@ from parquet_guard.core.reporter import (
     format_diff_sarif,
     format_diff_terminal,
 )
+from parquet_guard.ai import (  # noqa: E402, I001
+    diagnose_schema_drift,
+    generate_migration_plan,
+    propose_contract_evolution,
+    run_evaluation_suite,
+)
 
 __version__ = "0.2.0"
 __all__ = [
@@ -61,6 +69,10 @@ __all__ = [
     "analyze_compatibility",
     "audit_dataset",
     "compute_schema_fingerprint",
+    "diagnose_schema_drift",
+    "propose_contract_evolution",
+    "generate_migration_plan",
+    "run_evaluation_suite",
     "arrow_field_to_definition",
     "FieldDefinition",
     "SchemaContract",

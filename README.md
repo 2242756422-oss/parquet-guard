@@ -7,7 +7,7 @@
 [![SARIF 2.1.0](https://img.shields.io/badge/SARIF-2.1.0%20Compliant-purple.svg)](https://docs.github.com/en/code-security/code-scanning)
 [![Zero Data Scan](https://img.shields.io/badge/I%2FO-Zero--Data--Scan-orange.svg)](#architecture)
 
-> **Alpha Release Notice**: `parquet-guard` is currently classified as **Alpha (`v0.2.0-alpha`)**. It is functionally verified with 95 automated tests, strict Ruff/Mypy type compliance, and standard packaging, but community adoption and long-term production hardening are ongoing.
+> **Alpha Release Notice**: `parquet-guard` is currently classified as **Alpha (`v0.2.0-alpha`)**. It is functionally verified with 104 automated tests, strict Ruff/Mypy type compliance, standard packaging, and reproducible AI evaluation benchmarks, but community adoption and long-term production hardening are ongoing.
 
 **High-performance, zero-data-scan Parquet schema contract & drift detection guard with experimental incremental caching and SARIF reporting for data pipelines, MLOps, and CI/CD.**
 
@@ -42,6 +42,7 @@ In modern data engineering and AI training pipelines, Apache Parquet is the ubiq
   - Timestamp resolution and timezone shifts (`TIMESTAMP_TIMEZONE_MISMATCH`).
   - Deep nested Struct and List child fields with ordering and metadata retention.
 - **🔒 Golden Schema Contracts**: Export, enforce, and strictly validate declarative `.parquet-guard.json` contracts (`validate-contract`, `check`).
+- **🤖 Evidence-Grounded AI Schema Evolution Copilot**: Optional AI diagnostic and planning subsystem (`explain`, `propose-migration`, `eval-ai`). Cites deterministic finding IDs (`F001`, `F002`), evaluates DuckDB/PyArrow/Spark operational consequences, and generates deterministically validated migration plans with zero raw data leaks and zero CI verdict override authority.
 - **🛡️ SARIF 2.1.0 Native Integration**: Emits OASIS SARIF 2.1.0 reports (`--format sarif`), integrating directly into GitHub Code Scanning and security alerts.
 - **🗂️ Deterministic Partition Drift Auditor**: Recursively scans partitioned trees or globs to ensure 100% schema consistency across partitioned datasets with permutation invariance.
 - **💬 GitHub PR Automation**: Generates clean Markdown reports with status badges and collapsible diff tables, perfect for automated PR comments.
@@ -120,6 +121,31 @@ parquet-guard audit "data/lake/events/**/*.parquet" --mode strict
 
 # SARIF export for security dashboards
 parquet-guard audit "data/lake/events/**/*.parquet" --format sarif --output audit.sarif
+```
+
+### 6. AI-Assisted Schema Drift Diagnosis (`explain`)
+Generate an evidence-grounded diagnosis citing exact structural findings and downstream engine impact:
+```bash
+# Offline deterministic explanation (no API key required)
+parquet-guard explain data/new_batch.parquet -c contracts/events.schema.json
+
+# Markdown output for GitHub PR comments
+parquet-guard explain data/new_batch.parquet -c contracts/events.schema.json --format markdown
+
+# With live OpenAI provider (requires OPENAI_API_KEY)
+parquet-guard explain data/new_batch.parquet -c contracts/events.schema.json --provider openai --model gpt-4o-mini
+```
+
+### 7. Contract Evolution & Migration Planning (`propose-migration`)
+Generate a proposed contract update and executable PyArrow transformation code:
+```bash
+parquet-guard propose-migration data/new_batch.parquet -c contracts/events.schema.json --save-contract contracts/events.v2.json
+```
+
+### 8. Reproducible AI Benchmark Evaluation (`eval-ai`)
+Run the 12-scenario synthetic evaluation benchmark measuring finding identification, citation validity, and prompt-injection defense:
+```bash
+parquet-guard eval-ai --provider mock
 ```
 
 ---
@@ -256,7 +282,7 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 
-# 3. Run automated test suite (95 tests, 100% passing)
+# 3. Run automated test suite (104 tests, 100% passing)
 pytest tests/ -v
 
 # 4. Run static type checking and linters
@@ -267,7 +293,10 @@ mypy --explicit-package-bases src tests examples benchmarks
 # 5. Run fair empirical benchmark suite
 python benchmarks/fair_benchmark.py
 
-# 6. Verify distribution build
+# 6. Run reproducible AI evaluation benchmark suite
+parquet-guard eval-ai --provider mock
+
+# 7. Verify distribution build
 python -m build
 ```
 

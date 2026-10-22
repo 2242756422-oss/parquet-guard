@@ -26,7 +26,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **SARIF 2.1.0 Rules & URLs**: Expanded `tool.driver.rules` in SARIF exports to cover all known error codes (including `TEMPORAL_OVERFLOW_RISK`), and aligned repository URLs to `https://github.com/2242756422-oss/parquet-guard`.
 
 ### Added
-- **Temporal Boundary & Action Integration Test Suites**: Added `tests/test_temporal_boundaries.py` and `tests/test_action_integration.py` covering real PyArrow timestamp overflow boundaries (year 2300 `ArrowInvalid`), duration boundaries (~317 years `ArrowInvalid`), verdict extraction, and SARIF generation under failure. Total automated test suite expanded to **95 tests (100% pass rate)**.
+- **Parquet Guard AI — Evidence-Grounded Schema Evolution Copilot**:
+  - `explain` CLI command: Diagnoses schema drift with grounded citations to deterministic findings (`F001`, `F002`), operational consequences across DuckDB/PyArrow/Spark, and candidate remediations with zero raw data row access.
+  - `propose-migration` CLI command: Generates proposed SchemaContract updates and executable PyArrow transformation code, deterministically validated against the target schema before reporting.
+  - `eval-ai` CLI command: Reproducible benchmark evaluation suite running across 12 synthetic Arrow schema evolution scenarios, measuring factual consistency, finding accuracy, evidence citation validity, and prompt-injection defense.
+  - Provider abstraction: `BaseAIProvider`, `MockAIProvider` (offline, deterministic for testing/CI), and `OpenAICompatibleProvider` (pure Python urllib, zero mandatory external AI dependencies).
+  - Agent and tool-use interface: `parquet_guard.ai.agent_tools` providing JSON tool definitions for coding agents.
+  - End-to-end runnable demonstration: `examples/ai_pipeline_copilot/run_copilot_demo.py`.
+- **Temporal Boundary & Action Integration Test Suites**: Added `tests/test_temporal_boundaries.py`, `tests/test_action_integration.py`, and `tests/test_ai_subsystem.py`. Total automated test suite expanded to **104 tests (100% pass rate)**.
 - **Deep Arrow Type System Extensions**:
   - Unsigned integer safe widening respecting bit-depth constraints (`uint8 -> uint16/32/64/int16/32/64/float32/64`, `uint16 -> uint32/64/int32/64/float32/64`, `uint32 -> uint64/int64/float64`, strictly forbidding `uint64 -> int64` and `uint64 -> float64`).
   - Duration unit precision widening (`duration[s] -> duration[ms] -> duration[us] -> duration[ns]`).
