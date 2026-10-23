@@ -126,8 +126,17 @@ class MockAIProvider(BaseAIProvider):
         cited_ids = []
 
         is_breaking = "is_breaking>true" in prompt.lower()
-        has_suspicious = (
-            "ignore" in prompt.lower() or "override" in prompt.lower() or "bypass" in prompt.lower()
+        has_suspicious = any(
+            tok in prompt.lower()
+            for tok in [
+                "ignore",
+                "override",
+                "bypass",
+                "drop table",
+                "system:",
+                "<system>",
+                "grant_access",
+            ]
         )
 
         for fid, fpath, ctype, sev in finding_matches:
