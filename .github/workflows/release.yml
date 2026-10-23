@@ -3,7 +3,7 @@ name: Release & Publish
 on:
   push:
     tags:
-      - 'v*'
+      - 'v[0-9]*.[0-9]*.[0-9]*'
   workflow_dispatch:
     inputs:
       publish_target:
@@ -28,6 +28,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    outputs:
+      version: ${{ steps.validate-release.outputs.version }}
+      is_prerelease: ${{ steps.validate-release.outputs.is_prerelease }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -40,7 +43,119 @@ jobs:
 
       - name: Install build and packaging validation tools
         run: |
-          python -m pip install --upgrade pip build twine
+          python -m pip install --upgrade pip build twine packaging
+
+      - name: Validate version metadata, tag agreement, and release lineage
+        id: validate-release
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          FULL_REF: ${{ github.ref }}
+          PUBLISH_TARGET: ${{ inputs.publish_target }}
+        run: |
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          python - <<'PY'
+          import os
+          import pathlib
+          import re
+          import subprocess
+          import sys
+          from packaging.version import InvalidVersion, Version
+
+          pyproject_text = pathlib.Path("pyproject.toml").read_text(encoding="utf-8")
+          try:
+              import tomllib
+              pyproject_data = tomllib.loads(pyproject_text)
+              pyproject_version = str(pyproject_data["project"]["version"]).strip()
+          except ModuleNotFoundError:
+              m_py = re.search(r'^version\s*=\s*"([^"]+)"', pyproject_text, re.MULTILINE)
+              if not m_py:
+                  sys.exit("ERROR: Could not parse project.version from pyproject.toml")
+              pyproject_version = m_py.group(1).strip()
+
+          init_text = pathlib.Path("src/parquet_guard/__init__.py").read_text(encoding="utf-8")
+          m_init = re.search(r'^__version__\s*=\s*"([^"]+)"', init_text, re.MULTILINE)
+          if not m_init:
+              sys.exit("ERROR: Could not parse __version__ from src/parquet_guard/__init__.py")
+          init_version = m_init.group(1).strip()
+
+          if pyproject_version != init_version:
+              sys.exit(
+                  f"ERROR: Version mismatch between pyproject.toml ({pyproject_version!r}) "
+                  f"and src/parquet_guard/__init__.py ({init_version!r})."
+              )
+
+          try:
+              parsed_version = Version(pyproject_version)
+          except InvalidVersion as exc:
+              sys.exit(f"ERROR: Invalid PEP 440 version {pyproject_version!r}: {exc}")
+
+          allowed_version_re = re.compile(
+              r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)((a|b|rc)(0|[1-9][0-9]*))?$"
+          )
+          if str(parsed_version) != pyproject_version or not allowed_version_re.match(pyproject_version):
+              sys.exit(
+                  f"ERROR: Package version {pyproject_version!r} must be a canonical PEP 440 "
+                  "release or prerelease version (X.Y.Z, X.Y.ZaN, X.Y.ZbN, or X.Y.ZrcN)."
+              )
+
+          event_name = os.environ.get("EVENT_NAME", "")
+          ref_name = os.environ.get("REF_NAME", "")
+          ref_type = os.environ.get("REF_TYPE", "")
+          full_ref = os.environ.get("FULL_REF", "")
+          publish_target = os.environ.get("PUBLISH_TARGET", "")
+
+          def assert_ancestor_of_main() -> None:
+              res = subprocess.run(
+                  ["git", "merge-base", "--is-ancestor", "HEAD", "refs/remotes/origin/main"],
+                  capture_output=True,
+                  text=True,
+              )
+              if res.returncode != 0:
+                  sys.exit(
+                      "ERROR: Release commit HEAD is not an ancestor of origin/main. "
+                      "Releases and production publishes must originate from the approved main branch history."
+                  )
+
+          if event_name == "push" or ref_type == "tag" or full_ref.startswith("refs/tags/"):
+              expected_tag = f"v{pyproject_version}"
+              if ref_type != "tag" or not full_ref.startswith("refs/tags/"):
+                  sys.exit(f"ERROR: Push release trigger requires a tag ref, got {full_ref!r} (type={ref_type!r}).")
+              if ref_name != expected_tag:
+                  sys.exit(
+                      f"ERROR: Release tag {ref_name!r} does not match package version "
+                      f"{pyproject_version!r} (expected tag {expected_tag!r})."
+                  )
+              assert_ancestor_of_main()
+          elif event_name == "workflow_dispatch":
+              if publish_target not in ("testpypi", "pypi"):
+                  sys.exit(f"ERROR: Invalid publish_target {publish_target!r}.")
+              if publish_target == "pypi":
+                  if full_ref != "refs/heads/main":
+                      sys.exit(
+                          f"ERROR: Manual production publishing to PyPI is restricted to refs/heads/main "
+                          f"(got {full_ref!r})."
+                      )
+                  assert_ancestor_of_main()
+              else:
+                  if not (full_ref == "refs/heads/main" or full_ref.startswith("refs/heads/release/")):
+                      sys.exit(
+                          f"ERROR: Manual TestPyPI publishing is restricted to main or release/* branches "
+                          f"(got {full_ref!r})."
+                      )
+          else:
+              sys.exit(f"ERROR: Unsupported release trigger event {event_name!r}.")
+
+          is_prerelease = "true" if (parsed_version.is_prerelease or parsed_version.is_devrelease) else "false"
+          github_output = os.environ.get("GITHUB_OUTPUT")
+          if github_output:
+              with open(github_output, "a", encoding="utf-8") as fh:
+                  fh.write(f"version={pyproject_version}\n")
+                  fh.write(f"is_prerelease={is_prerelease}\n")
+
+          print(f"Validated release version: {pyproject_version} (is_prerelease={is_prerelease})")
+          PY
 
       - name: Build sdist and wheel
         run: python -m build
@@ -48,25 +163,27 @@ jobs:
       - name: Validate distribution metadata with Twine
         run: twine check --strict dist/*
 
-      - name: Verify package version matches pyproject.toml
+      - name: Verify built artifact filenames match validated package version
+        env:
+          PKG_VERSION: ${{ steps.validate-release.outputs.version }}
         run: |
-          PKG_VERSION=$(python -c "import re; m = re.search(r'version\s*=\s*\"([^\"]+)\"', open('pyproject.toml').read()); print(m.group(1))")
           echo "Expected version: ${PKG_VERSION}"
           test -f "dist/parquet_guard-${PKG_VERSION}-py3-none-any.whl"
           test -f "dist/parquet_guard-${PKG_VERSION}.tar.gz"
 
       - name: Test installation in clean isolated virtual environment
+        env:
+          PKG_VERSION: ${{ steps.validate-release.outputs.version }}
         run: |
-          PKG_VERSION=$(python -c "import re; m = re.search(r'version\s*=\s*\"([^\"]+)\"', open('pyproject.toml').read()); print(m.group(1))")
           python -m venv /tmp/clean_venv
           /tmp/clean_venv/bin/pip install --upgrade pip
           /tmp/clean_venv/bin/pip install "dist/parquet_guard-${PKG_VERSION}-py3-none-any.whl"
-          
+
           # CLI Smoke tests
           INSTALLED_VER=$(/tmp/clean_venv/bin/parquet-guard --version)
           echo "Installed CLI version: ${INSTALLED_VER}"
           echo "${INSTALLED_VER}" | grep -F "${PKG_VERSION}"
-          
+
           /tmp/clean_venv/bin/parquet-guard --help
           /tmp/clean_venv/bin/parquet-guard eval-ai --provider mock
 
@@ -80,7 +197,7 @@ jobs:
   publish-testpypi:
     name: Publish to TestPyPI (OIDC Trusted Publishing)
     needs: build-and-verify
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.publish_target == 'testpypi'
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_target == 'testpypi'
     runs-on: ubuntu-latest
     environment:
       name: testpypi
@@ -104,7 +221,9 @@ jobs:
   publish-pypi:
     name: Publish to PyPI (OIDC Trusted Publishing)
     needs: build-and-verify
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_target == 'pypi')
+    if: >-
+      (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish_target == 'pypi' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -126,8 +245,10 @@ jobs:
 
   create-github-release:
     name: Create GitHub Release
-    needs: [build-and-verify]
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - build-and-verify
+      - publish-pypi
+    if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -140,19 +261,10 @@ jobs:
           name: dist-artifacts
           path: dist/
 
-      - name: Determine if prerelease
-        id: prerelease-check
-        run: |
-          TAG_NAME="${{ github.ref_name }}"
-          if echo "$TAG_NAME" | grep -Eq '[a-zA-Z]'; then
-            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Create GitHub Release with Artifacts
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.ref_name }}
           files: dist/*
           generate_release_notes: true
-          prerelease: ${{ steps.prerelease-check.outputs.is_prerelease == 'true' }}
+          prerelease: ${{ needs.build-and-verify.outputs.is_prerelease == 'true' }}
