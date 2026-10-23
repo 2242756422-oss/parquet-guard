@@ -421,3 +421,7 @@ def generate_html_diagnostic_report(
 """
     with open(output_path, "w", encoding="utf-8") as fh:
         fh.write(html_content)
+
+
+# Convenience and backward-compatible alias
+generate_html_report = generate_html_diagnostic_report

@@ -334,9 +334,9 @@ def format_diagnosis_terminal(diagnosis: DriftDiagnosisReport) -> str:
 
     if diagnosis.potential_consequences:
         console.print("\n[bold yellow]⚡ Potential Downstream Consequences:[/bold yellow]")
-        for c in diagnosis.potential_consequences:
-            engines = ", ".join(c.affected_engines) if c.affected_engines else "All Readers"
-            console.print(f"  • [[bold cyan]{c.category.value}[/bold cyan]] ({engines}): {c.description}")
+        for cq in diagnosis.potential_consequences:
+            engines = ", ".join(cq.affected_engines) if cq.affected_engines else "All Readers"
+            console.print(f"  • [[bold cyan]{cq.category.value}[/bold cyan]] ({engines}): {cq.description}")
 
     if diagnosis.candidate_remediations:
         console.print("\n[bold green]🛠️ Candidate Remediation Strategies:[/bold green]")

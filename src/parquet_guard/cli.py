@@ -634,11 +634,19 @@ def propose_migration_cmd(
 @click.option(
     "-o", "--output", "out_file", type=click.Path(dir_okay=False), help="Save evaluation report to file."
 )
+@click.option(
+    "--split",
+    type=click.Choice(["all", "dev", "held_out"]),
+    default="all",
+    show_default=True,
+    help="Evaluation split to run ('all', 'dev', or 'held_out').",
+)
 def eval_ai_cmd(
     provider: str,
     model: Optional[str],
     fmt: str,
     out_file: Optional[str],
+    split: str,
 ) -> None:
     """Run reproducible benchmark evaluation across synthetic schema evolution scenarios."""
     try:
@@ -649,11 +657,16 @@ def eval_ai_cmd(
         from parquet_guard.ai.providers import get_provider
 
         ai_provider = get_provider(provider_type=provider, model_id=model)
-        click.secho(f"Evaluating provider: {provider} (model: {model or 'default'})...", fg="cyan")
+        split_filter = None if split == "all" else split
+        click.secho(
+            f"Evaluating provider: {provider} (model: {model or 'default'}, split: {split})...",
+            fg="cyan",
+        )
 
         report = run_evaluation_suite(
             provider=ai_provider,
             progress_callback=lambda name, cur, tot: click.echo(f"  [{cur}/{tot}] Evaluating: {name}"),
+            split=split_filter,
         )
 
         if fmt == "json":
@@ -681,6 +694,395 @@ def eval_ai_cmd(
 
     except Exception as exc:
         click.secho(f"Error running AI evaluation: {exc}", fg="red", err=True)
+        sys.exit(2)
+
+
+@main.command("impact")
+@click.argument("target_path", type=click.Path(exists=True))
+@click.option(
+    "-c",
+    "--consumers",
+    "consumers_path",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Path to ConsumerContract or ConsumerGroupSpecification JSON file.",
+)
+@click.option(
+    "-f",
+    "--format",
+    "fmt",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    show_default=True,
+    help="Output format.",
+)
+@click.option(
+    "-o",
+    "--output",
+    "out_file",
+    type=click.Path(dir_okay=False),
+    help="Optional output destination file.",
+)
+def impact_cmd(target_path: str, consumers_path: str, fmt: str, out_file: Optional[str]) -> None:
+    """Analyze upstream Parquet schema drift against declared downstream consumer contracts."""
+    try:
+        from parquet_guard.core.consumer import (
+            ConsumerCompatibilityStatus,
+            ConsumerContract,
+            ConsumerGroupSpecification,
+            evaluate_consumer_impact,
+        )
+
+        p = Path(target_path)
+        if p.is_dir():
+            audit_res = audit_dataset(str(p))
+            if not audit_res.canonical_schema:
+                click.secho(f"No valid Parquet files found in directory: {target_path}", fg="red", err=True)
+                sys.exit(2)
+            schema = audit_res.canonical_schema
+        else:
+            schema = inspect_schema(str(p))
+
+        c_data = json.loads(Path(consumers_path).read_text(encoding="utf-8"))
+        if "consumers" in c_data:
+            group = ConsumerGroupSpecification.model_validate(c_data)
+            consumers = group.consumers
+        else:
+            consumers = [ConsumerContract.model_validate(c_data)]
+
+        report = evaluate_consumer_impact(schema, consumers, dataset_identifier=p.name)
+
+        if fmt == "json":
+            out_str = report.model_dump_json(indent=2)
+        else:
+            lines = [
+                "=" * 70,
+                f" CONSUMER IMPACT ANALYSIS: {p.name}",
+                "=" * 70,
+                f" Overall Verdict : {report.overall_status.value}",
+                f" Total Consumers : {report.total_consumers}",
+                f" Compatible      : {report.compatible_consumers}",
+                f" Conditional     : {report.conditionally_compatible_consumers}",
+                f" Incompatible    : {report.incompatible_consumers}",
+                "-" * 70,
+            ]
+            for ev in report.evaluations:
+                lines.append(f" Consumer: {ev.consumer_name} ({ev.consumer_id}) -> {ev.status.value}")
+                if ev.missing_required_fields:
+                    lines.append(f"   Missing Fields     : {ev.missing_required_fields}")
+                if ev.type_mismatches:
+                    lines.append(f"   Type Mismatches    : {ev.type_mismatches}")
+                if ev.nullability_violations:
+                    lines.append(f"   Null Violations    : {ev.nullability_violations}")
+                if ev.dimension_mismatches:
+                    lines.append(f"   Dimension Mismatch : {ev.dimension_mismatches}")
+                if ev.unexpected_extra_fields:
+                    lines.append(f"   Extra Fields       : {ev.unexpected_extra_fields}")
+            lines.append("=" * 70)
+            out_str = "\n".join(lines)
+
+        if out_file:
+            Path(out_file).write_text(out_str, encoding="utf-8")
+            click.echo(f"Consumer impact report saved to: {out_file}")
+        else:
+            click.echo(out_str)
+
+        if report.overall_status == ConsumerCompatibilityStatus.INCOMPATIBLE:
+            sys.exit(1)
+        sys.exit(0)
+
+    except Exception as exc:
+        click.secho(f"Error evaluating consumer impact: {exc}", fg="red", err=True)
+        sys.exit(2)
+
+
+@main.command("verify-migration")
+@click.argument("plan_path", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "-c",
+    "--consumers",
+    "consumers_path",
+    type=click.Path(exists=True, dir_okay=False),
+    help="Optional consumer contracts JSON to verify against migrated output.",
+)
+@click.option(
+    "-n",
+    "--rows",
+    "sample_rows",
+    default=50,
+    show_default=True,
+    type=int,
+    help="Number of synthetic rows to generate and test.",
+)
+@click.option(
+    "-f",
+    "--format",
+    "fmt",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    show_default=True,
+    help="Output format.",
+)
+@click.option(
+    "-o",
+    "--output",
+    "out_file",
+    type=click.Path(dir_okay=False),
+    help="Optional output destination file.",
+)
+def verify_migration_cmd(
+    plan_path: str,
+    consumers_path: Optional[str],
+    sample_rows: int,
+    fmt: str,
+    out_file: Optional[str],
+) -> None:
+    """Execute candidate migration plan in an isolated synthetic sandbox to verify row count and value invariants."""
+    try:
+        from parquet_guard.core.consumer import (
+            ConsumerContract,
+            ConsumerGroupSpecification,
+        )
+        from parquet_guard.core.migration_verifier import (
+            ExecutableMigrationPlan,
+            verify_migration_plan,
+        )
+
+        plan_data = json.loads(Path(plan_path).read_text(encoding="utf-8"))
+        plan = ExecutableMigrationPlan.model_validate(plan_data)
+
+        consumers = None
+        if consumers_path:
+            c_data = json.loads(Path(consumers_path).read_text(encoding="utf-8"))
+            if "consumers" in c_data:
+                consumers = ConsumerGroupSpecification.model_validate(c_data).consumers
+            else:
+                consumers = [ConsumerContract.model_validate(c_data)]
+
+        click.secho(f"Executing migration sandbox verification: {plan.title}...", fg="cyan")
+        res = verify_migration_plan(plan, consumers=consumers, sample_rows=sample_rows)
+
+        if fmt == "json":
+            out_str = res.model_dump_json(indent=2)
+        else:
+            lines = [
+                "=" * 70,
+                f" MIGRATION SANDBOX VERIFICATION: {plan.plan_id}",
+                "=" * 70,
+                f" Result           : {'PASSED' if res.success else 'FAILED'}",
+                f" Rows Tested      : {res.rows_tested}",
+                f" Rows Preserved   : {res.row_count_preserved}",
+                f" Schema Matched   : {res.schema_matched}",
+                f" Value Invariants : {res.value_invariants_passed}",
+                f" Execution Time   : {res.execution_latency_ms} ms",
+                "-" * 70,
+            ]
+            if res.incompatible_consumers:
+                lines.append(f" Incompatible Consumers : {res.incompatible_consumers}")
+            if res.errors:
+                lines.append(" Errors:")
+                for err in res.errors:
+                    lines.append(f"   - {err}")
+            if res.warnings:
+                lines.append(" Warnings:")
+                for w in res.warnings:
+                    lines.append(f"   - {w}")
+            lines.append("=" * 70)
+            out_str = "\n".join(lines)
+
+        if out_file:
+            Path(out_file).write_text(out_str, encoding="utf-8")
+            click.echo(f"Verification report saved to: {out_file}")
+        else:
+            click.echo(out_str)
+
+        sys.exit(0 if res.success else 1)
+
+    except Exception as exc:
+        click.secho(f"Error verifying migration: {exc}", fg="red", err=True)
+        sys.exit(2)
+
+
+@main.command("report")
+@click.argument("dataset_dir", type=click.Path(exists=True, file_okay=False))
+@click.option(
+    "-o",
+    "--output",
+    "output_html",
+    required=True,
+    type=click.Path(dir_okay=False),
+    help="Output destination path for generated standalone HTML report.",
+)
+@click.option(
+    "-c",
+    "--consumers",
+    "consumers_path",
+    type=click.Path(exists=True, dir_okay=False),
+    help="Optional path to consumer contracts JSON.",
+)
+@click.option(
+    "-m",
+    "--migration-plan",
+    "plan_path",
+    type=click.Path(exists=True, dir_okay=False),
+    help="Optional ExecutableMigrationPlan JSON to verify in sandbox.",
+)
+@click.option(
+    "--title",
+    "title",
+    default=None,
+    help="Dataset or pipeline title for report header.",
+)
+def report_cmd(
+    dataset_dir: str,
+    output_html: str,
+    consumers_path: Optional[str],
+    plan_path: Optional[str],
+    title: Optional[str],
+) -> None:
+    """Generate a self-contained standalone HTML diagnostic report for a dataset."""
+    try:
+        from parquet_guard.core.consumer import (
+            ConsumerContract,
+            ConsumerGroupSpecification,
+            evaluate_consumer_impact,
+        )
+        from parquet_guard.core.grouping import analyze_dataset_topology
+        from parquet_guard.core.html_reporter import generate_html_diagnostic_report
+        from parquet_guard.core.migration_verifier import (
+            ExecutableMigrationPlan,
+            verify_migration_plan,
+        )
+
+        d_path = Path(dataset_dir)
+        report_title = title or d_path.name
+
+        click.secho(f"Auditing dataset '{d_path}'...", fg="cyan")
+        audit_res = audit_dataset(str(d_path))
+
+        consumers = None
+        if consumers_path:
+            c_data = json.loads(Path(consumers_path).read_text(encoding="utf-8"))
+            if "consumers" in c_data:
+                consumers = ConsumerGroupSpecification.model_validate(c_data).consumers
+            else:
+                consumers = [ConsumerContract.model_validate(c_data)]
+
+        topology = analyze_dataset_topology(audit_res, consumers=consumers)
+
+        impact_rep = None
+        if consumers and audit_res.canonical_schema:
+            impact_rep = evaluate_consumer_impact(
+                audit_res.canonical_schema, consumers, dataset_identifier=report_title
+            )
+
+        mig_res = None
+        if plan_path:
+            p_data = json.loads(Path(plan_path).read_text(encoding="utf-8"))
+            plan = ExecutableMigrationPlan.model_validate(p_data)
+            mig_res = verify_migration_plan(plan, consumers=consumers)
+
+        generate_html_diagnostic_report(
+            output_path=output_html,
+            audit_result=audit_res,
+            impact_report=impact_rep,
+            topology_report=topology,
+            migration_result=mig_res,
+            dataset_title=report_title,
+        )
+        click.secho(f"Diagnostic report successfully written to '{output_html}'.", fg="green")
+        sys.exit(0)
+
+    except Exception as exc:
+        click.secho(f"Error generating diagnostic report: {exc}", fg="red", err=True)
+        sys.exit(2)
+
+
+@main.command("serve-mcp")
+@click.option(
+    "--allowed-dir",
+    "allowed_dirs",
+    multiple=True,
+    type=click.Path(exists=True, file_okay=False),
+    help="Allowed directory boundary for file access (can be specified multiple times).",
+)
+def serve_mcp_cmd(allowed_dirs: tuple[str, ...]) -> None:
+    """Start the Model Context Protocol (MCP) server over standard I/O (stdio)."""
+    try:
+        from parquet_guard.mcp.server import MCPServer
+
+        dirs = list(allowed_dirs) if allowed_dirs else None
+        server = MCPServer(allowed_dirs=dirs)
+        server.run_stdio()
+    except Exception as exc:
+        click.secho(f"MCP server terminated with error: {exc}", fg="red", err=True)
+        sys.exit(2)
+
+
+@main.command("init-consumer")
+@click.argument("file_path", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "-o",
+    "--output",
+    "output_path",
+    required=True,
+    type=click.Path(dir_okay=False),
+    help="Destination path for consumer contract JSON file.",
+)
+@click.option(
+    "-id",
+    "--consumer-id",
+    "consumer_id",
+    required=True,
+    help="Unique machine identifier for consumer (e.g. 'duckdb-analytics').",
+)
+@click.option(
+    "-n",
+    "--name",
+    "consumer_name",
+    default=None,
+    help="Human-readable name for consumer.",
+)
+def init_consumer_cmd(
+    file_path: str, output_path: str, consumer_id: str, consumer_name: Optional[str]
+) -> None:
+    """Export a starter ConsumerContract JSON inferred from an existing Parquet file."""
+    try:
+        from parquet_guard.core.consumer import (
+            ConsumerContract,
+            ConsumerFieldRequirement,
+        )
+
+        schema = inspect_schema(file_path)
+        reqs = []
+        for f in schema.fields:
+            reqs.append(
+                ConsumerFieldRequirement(
+                    name=f.name,
+                    required=True,
+                    permitted_types=[f.type],
+                    allow_null=f.nullable,
+                    list_size=f.list_size,
+                    scale=f.scale,
+                    time_unit=f.time_unit,
+                    timezone=f.timezone,
+                    critical=True,
+                )
+            )
+
+        c = ConsumerContract(
+            consumer_id=consumer_id,
+            consumer_name=consumer_name or consumer_id,
+            fields=reqs,
+            allow_extra_fields=True,
+        )
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(output_path).write_text(c.model_dump_json(indent=2), encoding="utf-8")
+        click.secho(f"Consumer contract successfully exported to '{output_path}'.", fg="green")
+        sys.exit(0)
+
+    except Exception as exc:
+        click.secho(f"Error creating consumer contract: {exc}", fg="red", err=True)
         sys.exit(2)
 
 

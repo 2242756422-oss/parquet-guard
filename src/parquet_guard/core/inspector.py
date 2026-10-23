@@ -240,3 +240,7 @@ def validate_contract(contract_path: Union[str, Path]) -> Tuple[bool, Optional[s
         return True, None
     except Exception as exc:
         return False, str(exc)
+
+
+# Public alias for inspect_schema
+inspect_parquet_schema = inspect_schema

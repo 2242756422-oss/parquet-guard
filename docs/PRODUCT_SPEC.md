@@ -205,10 +205,32 @@ The `parquet_guard.ai` module provides optional schema intelligence, diagnostic 
    - `generate_migration_plan` synthesizes executable PyArrow scripts for operator review and manual execution; Parquet Guard never executes unreviewed batch disk writes against production datasets.
 
 4. **Offline Evaluation vs. Live Frontier Models**:
-   - The 12 synthetic benchmark scenarios run under `--provider mock` evaluate offline harness integrity, XML finding parsing, citation validity, and fallback logic against deterministic ground truth.
+   - The expanded 64 synthetic benchmark scenarios (40 dev + 24 held-out) run under `--provider mock` evaluate offline harness integrity, XML finding parsing, citation validity, and fallback logic against deterministic ground truth.
    - Live frontier model benchmarking requires explicit opt-in and live provider configuration.
 
-5. **Agent Tools vs. Full MCP Protocol**:
-   - `agent_tools.py` provides OpenAI-compatible tool definitions and an in-process Python execution dispatcher.
-   - It does not implement a standalone JSON-RPC Model Context Protocol (MCP) daemon.
+5. **Agent Tools & Model Context Protocol (MCP) Server**:
+   - `parquet_guard.ai.agent_tools` provides OpenAI-compatible function calling schemas and an in-process tool dispatcher.
+   - `parquet_guard.mcp` provides a fully compliant Model Context Protocol (MCP) daemon communicating over stdio JSON-RPC 2.0 with path traversal sandboxing and 7 core analysis tools.
+
+---
+
+## 11. Consumer-Aware Schema Intelligence & Topology Grouping
+
+### 11.1 Downstream Consumer Contracts
+Data contracts must reflect actual downstream reader expectations rather than assuming identical requirements across all consumers:
+- **`ConsumerContract`**: Encapsulates consumer identifier, human name, target dataset, required fields, and compatibility policies.
+- **Policies**: `strict` (enforces exact type matching and forbids undeclared columns) vs `permissive` (permits safe unidirectional widening and optional extra columns).
+- **`evaluate_consumer_impact()`**: Deterministically maps producer schema changes to downstream consumer outcomes, categorizing consumers as COMPATIBLE, CONDITIONALLY_COMPATIBLE, or INCOMPATIBLE.
+
+### 11.2 Dataset Topology & Schema Grouping
+- **`analyze_dataset_topology()`**: Analyzes multi-partition datasets across directories, grouping files sharing identical canonical fingerprints without reading data pages.
+- **Canonical Cluster Identification**: Automatically determines the dominant schema group.
+- **Divergence Concentration**: Surfaces specific columns causing schema drift across partitions with file counts and breaking status.
+
+### 11.3 Verified Synthetic Migration Sandbox
+- **`verify_migration_plan()`**: Executes proposed `ExecutableMigrationPlan` transformations on representative synthetic Parquet tables within isolated temporary directory environments.
+- **Invariants Checked**: Row-count preservation, non-null value retention, type truncation/overflow prevention via `safe=True` PyArrow casting, and post-migration consumer compatibility verification.
+
+### 11.4 Standalone Technical HTML Reporting
+- **`generate_html_diagnostic_report()`**: Emits single-file, zero-CDN, offline-safe HTML reports containing SVG consumer impact graphs, cluster topology tables, schema diff matrices, and sandbox execution logs.
 

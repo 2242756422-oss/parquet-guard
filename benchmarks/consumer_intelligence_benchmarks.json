@@ -1,0 +1,71 @@
+{
+  "topology": {
+    "100_partitions": {
+      "mean": 0.217,
+      "median": 0.203,
+      "min": 0.19,
+      "max": 0.315,
+      "stdev": 0.038
+    }
+  },
+  "consumer_scaling": {
+    "1": {
+      "mean": 0.016,
+      "median": 0.013,
+      "min": 0.012,
+      "max": 0.048,
+      "stdev": 0.008
+    },
+    "5": {
+      "mean": 0.043,
+      "median": 0.042,
+      "min": 0.042,
+      "max": 0.056,
+      "stdev": 0.004
+    },
+    "10": {
+      "mean": 0.112,
+      "median": 0.081,
+      "min": 0.078,
+      "max": 0.651,
+      "stdev": 0.127
+    },
+    "20": {
+      "mean": 0.158,
+      "median": 0.154,
+      "min": 0.153,
+      "max": 0.177,
+      "stdev": 0.007
+    }
+  },
+  "sandbox_verification": {
+    "100": {
+      "mean": 16.627,
+      "median": 1.171,
+      "min": 0.962,
+      "max": 155.717,
+      "stdev": 48.871
+    },
+    "500": {
+      "mean": 1.307,
+      "median": 1.265,
+      "min": 1.049,
+      "max": 1.641,
+      "stdev": 0.195
+    },
+    "1000": {
+      "mean": 1.591,
+      "median": 1.526,
+      "min": 1.458,
+      "max": 2.011,
+      "stdev": 0.167
+    }
+  },
+  "html_report": {
+    "mean": 0.114,
+    "median": 0.103,
+    "min": 0.098,
+    "max": 0.232,
+    "stdev": 0.034
+  }
+}

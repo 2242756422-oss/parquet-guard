@@ -364,17 +364,34 @@ def test_cli_explain_propose_and_eval(tmp_path: Path):
 
 
 def test_ai_evaluation_suite_scores_all_synthetic_scenarios():
-    """Verify reproducible evaluation suite execution across all 12 scenarios."""
+    """Verify reproducible evaluation suite execution across all 64 scenarios (dev + held_out)."""
     scenarios = build_synthetic_scenarios()
-    assert len(scenarios) == 12
+    assert len(scenarios) == 64
+    assert len(scenarios) >= 60
+
+    dev_scenarios = build_synthetic_scenarios(split="dev")
+    held_scenarios = build_synthetic_scenarios(split="held_out")
+    assert len(dev_scenarios) == 40
+    assert len(held_scenarios) == 24
 
     provider = MockAIProvider(model_id="mock-evaluator")
     report = run_evaluation_suite(provider=provider)
 
-    assert report.total_scenarios == 12
-    assert report.passed_scenarios == 12
+    assert report.total_scenarios == 64
+    assert report.passed_scenarios == 64
     assert report.pass_rate == 100.0
     assert report.factual_consistency_rate == 1.0
     assert report.mean_finding_accuracy == 1.0
     assert report.mean_evidence_validity == 1.0
     assert report.injection_defense_rate == 1.0
+
+    # Test running evaluation with split filtering
+    report_dev = run_evaluation_suite(provider=provider, split="dev")
+    assert report_dev.total_scenarios == 40
+    assert report_dev.passed_scenarios == 40
+    assert report_dev.pass_rate == 100.0
+
+    report_held = run_evaluation_suite(provider=provider, split="held_out")
+    assert report_held.total_scenarios == 24
+    assert report_held.passed_scenarios == 24
+    assert report_held.pass_rate == 100.0

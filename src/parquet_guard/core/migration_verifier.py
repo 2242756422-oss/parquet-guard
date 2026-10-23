@@ -25,6 +25,7 @@ import pyarrow.parquet as pq
 from pydantic import BaseModel, ConfigDict, Field
 
 from parquet_guard.core.compatibility import (
+    _normalize_type_str,
     _parse_decimal_params,
     _parse_timestamp_params,
 )
@@ -237,6 +238,15 @@ def generate_synthetic_parquet_table(
                 else:
                     vals_64.append(i * 1000 + 1)
             columns[f.name] = pa.array(vals_64, type=pa.int64())
+
+        elif t in ("bool", "boolean"):
+            b_vals: List[Optional[bool]] = []
+            for i in range(row_count):
+                if nullable and i == 0:
+                    b_vals.append(None)
+                else:
+                    b_vals.append(i % 2 == 0)
+            columns[f.name] = pa.array(b_vals, type=pa.bool_())
 
         elif t in ("float", "float32", "double", "float64"):
             pa_f_type = pa.float32() if "32" in t or t == "float" else pa.float64()
@@ -457,7 +467,7 @@ def verify_migration_plan(
             schema_matched = True
             for target_field in plan.target_contract.fields:
                 act = readback_schema.get_field(target_field.name)
-                if not act or act.type != target_field.type:
+                if not act or _normalize_type_str(act.type) != _normalize_type_str(target_field.type):
                     schema_matched = False
                     errors.append(
                         f"Field '{target_field.name}' type mismatch: expected {target_field.type}, got {act.type if act else None}"

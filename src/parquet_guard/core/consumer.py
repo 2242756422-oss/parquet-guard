@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 from enum import Enum
-from typing import Any, ClassVar, Dict, List, Optional, Set
+from typing import Any, ClassVar, Dict, List, Optional, Set, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -567,14 +567,17 @@ def evaluate_single_consumer(
 
 def evaluate_consumer_impact(
     schema: SchemaContract,
-    consumers: List[ConsumerContract],
+    consumers: Union[List[ConsumerContract], ConsumerGroupSpecification],
     dataset_identifier: str = "dataset",
 ) -> ConsumerImpactReport:
     """Evaluate a producer schema against all registered downstream consumers."""
+    consumer_list: List[ConsumerContract] = (
+        consumers.consumers if isinstance(consumers, ConsumerGroupSpecification) else list(consumers)
+    )
     evaluations: List[ConsumerImpactEvaluation] = []
     matrix: Dict[str, Dict[str, str]] = {}
 
-    for c in consumers:
+    for c in consumer_list:
         res = evaluate_single_consumer(schema, c)
         evaluations.append(res)
 
@@ -658,7 +661,7 @@ def evaluate_consumer_impact(
     graph = ConsumerImpactGraph(nodes=nodes, edges=edges)
 
     summary = (
-        f"Evaluated {len(consumers)} consumers against '{dataset_identifier}': "
+        f"Evaluated {len(consumer_list)} consumers against '{dataset_identifier}': "
         f"{compatible_cnt} compatible, {conditional_cnt} conditional, {incompatible_cnt} incompatible. "
         f"Overall verdict: {overall.value}"
     )
@@ -666,7 +669,7 @@ def evaluate_consumer_impact(
     return ConsumerImpactReport(
         dataset_identifier=dataset_identifier,
         overall_status=overall,
-        total_consumers=len(consumers),
+        total_consumers=len(consumer_list),
         compatible_consumers=compatible_cnt,
         conditionally_compatible_consumers=conditional_cnt,
         incompatible_consumers=incompatible_cnt,
