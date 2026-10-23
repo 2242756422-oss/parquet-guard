@@ -56,7 +56,7 @@ from parquet_guard.ai import (  # noqa: E402, I001
     run_evaluation_suite,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.3.0a1"
 __all__ = [
     "__version__",
     "inspect_schema",

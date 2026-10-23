@@ -278,7 +278,7 @@ class OpenAICompatibleProvider(BaseAIProvider):
             headers={
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {self.api_key}",
-                "User-Agent": "parquet-guard/0.2.0-ai",
+                "User-Agent": "parquet-guard/0.3.0a1-ai",
             },
             method="POST",
         )

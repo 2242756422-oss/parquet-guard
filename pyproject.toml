@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "parquet-guard"
-version = "0.2.0"
+version = "0.3.0a1"
 description = "High-performance, zero-data-scan Parquet schema contract & drift detection guard for data pipelines, MLOps, and CI/CD."
 readme = "README.md"
 authors = [
@@ -52,6 +52,15 @@ Changelog = "https://github.com/2242756422-oss/parquet-guard/blob/main/CHANGELOG
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/parquet_guard"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+    "/application",
+    "/community",
+    "/research",
+    "/.venv",
+    "/dist",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import Optional
@@ -60,7 +61,7 @@ def inspect_cmd(file_path: str, fmt: str) -> None:
                 "file_metadata": meta,
                 "schema_contract": contract.model_dump(),
             }
-            click.echo(format_diff_json(out))  # type: ignore[arg-type]
+            click.echo(json.dumps(out, indent=2))
         else:
             click.echo("=" * 70)
             click.echo(" PARQUET FILE METADATA & SCHEMA INSPECTOR")
