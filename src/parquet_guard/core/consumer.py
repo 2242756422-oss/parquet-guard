@@ -665,7 +665,7 @@ def _check_permitted_types(
 
 def _producer_list_size(field: FieldDefinition) -> Optional[int]:
     if field.list_size is not None:
-        return field.list_size
+        return int(field.list_size)
     m = re.search(r"\[(\d+)\]\s*$", field.type.strip())
     return int(m.group(1)) if m else None
 
@@ -935,7 +935,11 @@ def evaluate_single_consumer(
 
         status = compose_statuses(c.status for c in checks)
         failed = {c.constraint for c in checks if c.status == ConsumerCompatibilityStatus.INCOMPATIBLE}
-        if "list_size" in failed:
+        if "list_size" in failed or (
+            "permitted_types" in failed
+            and "fixed_size_list" in p_field.type.lower()
+            and any("fixed_size_list" in pt.lower() for pt in req.permitted_types)
+        ):
             dimension_mismatches.append(req.name)
         if failed & _TYPE_CONSTRAINTS:
             type_mismatches.append(req.name)

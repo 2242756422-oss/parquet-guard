@@ -783,3 +783,129 @@ def test_p0_c_nested_nullability_and_unescaped_literal_dot_rejection() -> None:
     assert ev_unescaped.status == ConsumerCompatibilityStatus.INCOMPATIBLE
     assert "metric.v1" in ev_unescaped.missing_required_fields
     assert r"metric\.v1" in (ev_unescaped.field_evaluations[0].violation_reason or "")
+
+
+def test_real_pyarrow_engine_behavior_vs_declared_consumer_contracts(tmp_path: Path) -> None:
+    """Section 9: Verify declared ConsumerContract evaluation aligns with observed PyArrow dataset/table reader execution."""
+    import pyarrow as pa
+    import pyarrow.compute as pc
+    import pyarrow.dataset as ds
+    import pyarrow.parquet as pq
+    import pytest
+
+    from parquet_guard.core.inspector import inspect_parquet_schema
+
+    # 1. Producer writes drifted partition:
+    #    - user_id widened int32 -> int64
+    #    - amount decimal scale changed (10,2) -> (10,4)
+    #    - event_ts stripped timezone UTC -> naive
+    #    - embedding changed fixed_size_list<float>[4] -> [8]
+    #    - unexpected extra column 'debug_trace'
+    f_drifted = tmp_path / "drifted.parquet"
+    drifted_schema = pa.schema(
+        [
+            pa.field("user_id", pa.int64(), nullable=False),
+            pa.field("amount", pa.decimal128(10, 4), nullable=False),
+            pa.field("event_ts", pa.timestamp("ms", tz=None), nullable=False),
+            pa.field("embedding", pa.list_(pa.float32(), 8), nullable=False),
+            pa.field("debug_trace", pa.string(), nullable=True),
+        ]
+    )
+    import decimal
+
+    drifted_table = pa.Table.from_arrays(
+        [
+            pa.array([101, 102], type=pa.int64()),
+            pa.array([decimal.Decimal("12.3400"), decimal.Decimal("56.7800")], type=pa.decimal128(10, 4)),
+            pa.array([1770000000000, 1770000001000], type=pa.timestamp("ms")),
+            pa.array([[0.1] * 8, [0.2] * 8], type=pa.list_(pa.float32(), 8)),
+            pa.array(["t1", "t2"], type=pa.string()),
+        ],
+        schema=drifted_schema,
+    )
+    pq.write_table(drifted_table, f_drifted)
+    inspected = inspect_parquet_schema(f_drifted)
+
+    # Consumer A: Strict PyArrow reader expecting exact baseline schema (int32, decimal(10,2), UTC, dim=4, no extra fields)
+    strict_arrow_consumer = ConsumerContract(
+        consumer_id="pyarrow-strict-reader",
+        consumer_name="PyArrow Strict Schema Reader",
+        compatibility_policy="strict",
+        allow_extra_fields=False,
+        fields=[
+            ConsumerFieldRequirement(
+                name="user_id", permitted_types=["int32"], allow_null=False, critical=True
+            ),
+            ConsumerFieldRequirement(
+                name="amount",
+                permitted_types=["decimal128(10, 2)"],
+                precision=10,
+                scale=2,
+                critical=True,
+            ),
+            ConsumerFieldRequirement(
+                name="event_ts",
+                permitted_types=["timestamp[ms, tz=UTC]"],
+                time_unit="ms",
+                timezone="UTC",
+                critical=True,
+            ),
+            ConsumerFieldRequirement(
+                name="embedding",
+                permitted_types=["fixed_size_list<float>[4]"],
+                list_size=4,
+                critical=True,
+            ),
+        ],
+    )
+    ev_strict = evaluate_single_consumer(inspected, strict_arrow_consumer)
+    assert ev_strict.status == ConsumerCompatibilityStatus.INCOMPATIBLE
+    assert ev_strict.is_blocking is True
+
+    # Observed PyArrow execution when strict reader enforces expected schema or safe casts:
+    expected_pa_schema = pa.schema(
+        [
+            pa.field("user_id", pa.int32(), nullable=False),
+            pa.field("amount", pa.decimal128(10, 2), nullable=False),
+            pa.field("event_ts", pa.timestamp("ms", tz="UTC"), nullable=False),
+            pa.field("embedding", pa.list_(pa.float32(), 4), nullable=False),
+        ]
+    )
+    # Reading via pyarrow.dataset with expected fixed_size_list[4] fails at runtime when physical file has [8]
+    dataset_strict = ds.dataset(f_drifted, format="parquet", schema=expected_pa_schema)
+    with pytest.raises((pa.ArrowInvalid, pa.ArrowTypeError)):
+        _ = dataset_strict.to_table()
+
+    # Safe casting decimal(10,4) with non-zero low digits or casting fixed_size_list[8] -> [4] also fails in PyArrow compute
+    with pytest.raises((pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError)):
+        _ = pc.cast(drifted_table["embedding"], pa.list_(pa.float32(), 4), safe=True)
+
+    # Consumer B: Permissive projection reader that only projects 'user_id' (allowing int32->int64 widening) and ignores extra columns
+    permissive_projection_consumer = ConsumerContract(
+        consumer_id="pyarrow-permissive-projection",
+        consumer_name="PyArrow Permissive ID Reader",
+        compatibility_policy="permissive",
+        allow_extra_fields=True,
+        fields=[
+            ConsumerFieldRequirement(
+                name="user_id",
+                permitted_types=["int32", "int64"],
+                allow_null=False,
+                critical=True,
+            ),
+            ConsumerFieldRequirement(
+                name="optional_tag",
+                required=False,
+                permitted_types=["string"],
+                critical=False,
+            ),
+        ],
+    )
+    ev_perm = evaluate_single_consumer(inspected, permissive_projection_consumer)
+    assert ev_perm.status == ConsumerCompatibilityStatus.COMPATIBLE
+    assert ev_perm.is_blocking is False
+
+    # Observed PyArrow projection read succeeds cleanly
+    projected = pq.read_table(f_drifted, columns=["user_id"])
+    assert projected.num_rows == 2
+    assert projected.schema.field("user_id").type == pa.int64()
