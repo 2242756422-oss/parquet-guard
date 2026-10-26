@@ -191,6 +191,7 @@ def test_release_workflow_permissions_and_job_dependencies() -> None:
     ("version_str", "expected_prerelease"),
     [
         ("0.3.0a1", "true"),
+        ("0.4.0a1", "true"),
         ("0.3.0b2", "true"),
         ("0.3.0rc1", "true"),
         ("0.3.0", "false"),
@@ -324,3 +325,17 @@ def test_publishing_docs_cover_signed_tags_and_pending_publishers() -> None:
     assert "git tag -s" in doc
     assert "git tag -a" in doc
     assert "without** a cryptographic GPG/SSH signature" in doc
+
+
+def test_live_repository_version_consistency() -> None:
+    import parquet_guard
+    from parquet_guard.mcp.server import SERVER_VERSION
+
+    pyproject_text = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    m = re.search(r'^version\s*=\s*"([^"]+)"', pyproject_text, re.MULTILINE)
+    assert m is not None
+    pyproject_ver = m.group(1)
+
+    assert pyproject_ver == "0.4.0a1"
+    assert parquet_guard.__version__ == pyproject_ver
+    assert SERVER_VERSION == pyproject_ver

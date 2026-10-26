@@ -1,13 +1,13 @@
 # 🛡️ parquet-guard
 
 [![CI](https://github.com/2242756422-oss/parquet-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/2242756422-oss/parquet-guard/actions)
-[![PyPI version](https://img.shields.io/badge/pypi-v0.3.0a1-blue.svg)](https://pypi.org/project/parquet-guard/)
+[![PyPI version](https://img.shields.io/badge/pypi-v0.4.0a1-blue.svg)](https://pypi.org/project/parquet-guard/)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)](https://pypi.org/project/parquet-guard/)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-green.svg)](https://opensource.org/licenses/Apache-2.0)
 [![SARIF 2.1.0](https://img.shields.io/badge/SARIF-2.1.0%20Compliant-purple.svg)](https://docs.github.com/en/code-security/code-scanning)
 [![Zero Data Scan](https://img.shields.io/badge/I%2FO-Zero--Data--Scan-orange.svg)](#architecture)
 
-> **Alpha Prerelease Notice**: `parquet-guard` is currently classified as **Alpha (`v0.3.0a1`)**. It is functionally verified with 104 automated tests, strict Ruff/Mypy type compliance, standard packaging, reproducible AI evaluation benchmarks, and full cross-platform CI matrix support across Linux, macOS, and Windows. Community adoption and production hardening are ongoing.
+> **Alpha Prerelease Notice**: `parquet-guard` is currently classified as **Alpha (`v0.4.0a1`)**. It is functionally verified with 162+ automated tests, strict Ruff/Mypy type compliance, standard packaging, reproducible 64-scenario AI evaluation benchmarks, and full cross-platform CI matrix support across Linux, macOS, and Windows. Community adoption and production hardening are ongoing.
 
 **High-performance, zero-data-scan Parquet schema contract & drift detection guard with experimental incremental caching and SARIF reporting for data pipelines, MLOps, and CI/CD.**
 
@@ -59,8 +59,11 @@ In modern data engineering and AI training pipelines, Apache Parquet is the ubiq
 ## 📦 Installation
 
 ```bash
-# From PyPI (upon public distribution)
+# Install latest release from PyPI
 pip install parquet-guard
+
+# Or pin a specific Alpha release (v0.4.0a1 or v0.3.0a1)
+pip install parquet-guard==0.4.0a1
 
 # Or install locally from source
 git clone https://github.com/2242756422-oss/parquet-guard.git
@@ -68,7 +71,7 @@ cd parquet-guard
 pip install .
 
 # Or install from built wheel artifact
-pip install dist/parquet_guard-0.3.0a1-py3-none-any.whl
+pip install dist/parquet_guard-0.4.0a1-py3-none-any.whl
 ```
 
 ---
@@ -145,8 +148,8 @@ parquet-guard explain data/new_batch.parquet -c contracts/events.schema.json --p
 ### 7. Consumer Impact Analysis (`impact` & `init-consumer`)
 Initialize and evaluate downstream consumer compatibility contracts:
 ```bash
-# Generate consumer contract template
-parquet-guard init-consumer -o contracts/duckdb_consumer.json --consumer-id duckdb-analytics
+# Generate consumer contract template from an existing Parquet file
+parquet-guard init-consumer data/sample.parquet -o contracts/duckdb_consumer.json --consumer-id duckdb-analytics --name "DuckDB Analytics"
 
 # Evaluate downstream impact across consumer group specification
 parquet-guard impact data/new_batch.parquet -c contracts/consumers.json
@@ -158,20 +161,20 @@ parquet-guard impact data/new_batch.parquet -c contracts/consumers.json --format
 ### 8. Synthetic Migration Verification Sandbox (`verify-migration`)
 Validate migration plans against synthetic edge-case data in an isolated filesystem sandbox:
 ```bash
-parquet-guard verify-migration data/new_batch.parquet --plan migration_plan.json -c contracts/consumers.json --sample-rows 100
+parquet-guard verify-migration migration_plan.json -c contracts/consumers.json --rows 100
 ```
 
 ### 9. Standalone Interactive HTML Report (`report`)
 Generate an all-in-one HTML dashboard with SVG impact DAG, topology breakdown, and compatibility matrix:
 ```bash
-parquet-guard report "data/lake/**/*.parquet" -c contracts/consumers.json -o diagnostic_report.html
+parquet-guard report data/lake -c contracts/consumers.json -o diagnostic_report.html
 ```
 
 ### 10. Model Context Protocol (MCP) Server (`serve-mcp`)
 Launch the official stdio JSON-RPC 2.0 MCP server for AI pair programming:
 ```bash
 # Run stdio MCP server for Cursor, Claude Desktop, or Windsurf
-parquet-guard serve-mcp --workdir /path/to/project
+parquet-guard serve-mcp --allowed-dir /path/to/project
 ```
 
 ### 11. Contract Evolution & Migration Planning (`propose-migration`)
@@ -217,8 +220,8 @@ To ensure absolute clarity for enterprise and compliance reviewers, `parquet-gua
 - **Physical Migration Script Generation**: The `propose-migration` command generates runnable Python/PyArrow transformation code for pipeline operators to review. `parquet-guard` does **not** physically rewrite, mutate, or migrate production data partitions on disk without manual execution by an authorized operator.
 
 ### 3. Agent Tool Calling vs. MCP Daemon
-- **Agent Interoperability**: `parquet_guard.ai.agent_tools` provides OpenAI-compatible function-calling schemas (`AGENT_TOOL_DEFINITIONS`) and an in-process tool dispatcher (`call_agent_tool`).
-- **Protocol Distinction**: This module provides an agent tool interface for integration into existing agent runtimes; it is **not** a standalone Model Context Protocol (MCP) JSON-RPC stdio/SSE server daemon.
+- **In-Process Agent Function Calling**: `parquet_guard.ai.agent_tools` provides OpenAI-compatible function-calling schemas (`AGENT_TOOL_DEFINITIONS`) and an in-process tool dispatcher (`call_agent_tool`) for direct Python agent integration.
+- **Stdio MCP Server Daemon**: `parquet_guard.mcp.server` (`parquet-guard serve-mcp --allowed-dir <dir>`) provides a standalone Model Context Protocol (MCP) JSON-RPC 2.0 server over stdio with path-traversal sandboxing, payload size limits, and overwrite guards.
 
 ---
 

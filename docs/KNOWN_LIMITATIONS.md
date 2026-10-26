@@ -1,10 +1,10 @@
-# Known limitations and verification status (v0.3.0a1 Alpha)
+# Known limitations and verification status (v0.4.0a1 Alpha)
 
 This document identifies risks to be checked before a stable release. It is not a claim that they were reproduced by the package creator in every environment.
 
-- **Dictionary contracts:** parameters represented separately from nested field structures may not be consistently included in structural equality and schema fingerprinting.
-- **Incremental cache:** exceptional conditions after cache hits may not always produce clean inspection-error results. Use full audits for high-assurance workflows pending additional validation.
-- **Contract type validation:** unsupported Arrow type identifiers may not always be rejected early.
+- **Dictionary contracts (resolved in v0.4.0a1):** Dictionary index type, value type, and `ordered` semantics are now preserved in `FieldDefinition` and included in schema fingerprinting and compatibility diffs. Complex nested dictionary variations should still be validated in target query engines.
+- **Incremental cache (hardened in v0.4.0a1):** Post-cache-hit reconstruction errors now fall back to fresh inspection or emit `ResultState.INSPECTION_ERROR`. Because the cache relies on filesystem `mtime_ns` and file size, use `--force-full` in CI environments where git checkouts do not preserve modification times.
+- **Contract type validation (hardened in v0.4.0a1):** `validate_contract()` now recursively validates Arrow type strings against the supported grammar and rejects unknown type identifiers.
 - **Hosted CI:** cross-platform GitHub Actions success is not established by merely including workflow files.
 - **Performance:** no independently verified performance advantage is asserted in this public Alpha readme.
 - **Package distribution:** the source is provided for evaluation. PyPI availability is not asserted.

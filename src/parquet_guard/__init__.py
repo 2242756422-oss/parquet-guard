@@ -16,6 +16,25 @@ from parquet_guard.core.cache import (
     save_audit_cache,
 )
 from parquet_guard.core.compatibility import analyze_compatibility, compare_schemas
+from parquet_guard.core.consumer import (
+    ConsumerCompatibilityStatus,
+    ConsumerContract,
+    ConsumerFieldRequirement,
+    ConsumerGroupSpecification,
+    ConsumerImpactEvaluation,
+    ConsumerImpactReport,
+    evaluate_consumer_impact,
+    evaluate_single_consumer,
+)
+from parquet_guard.core.grouping import (
+    DatasetTopologyReport,
+    SchemaGroup,
+    analyze_dataset_topology,
+)
+from parquet_guard.core.html_reporter import (
+    generate_html_diagnostic_report,
+    generate_html_report,
+)
 from parquet_guard.core.inspector import (
     ContractValidationError,
     ParquetReadError,
@@ -26,6 +45,14 @@ from parquet_guard.core.inspector import (
     load_contract,
     save_contract,
     validate_contract,
+)
+from parquet_guard.core.migration_verifier import (
+    ExecutableMigrationPlan,
+    MigrationActionType,
+    MigrationOperation,
+    MigrationReadinessStatus,
+    MigrationVerificationResult,
+    verify_migration_plan,
 )
 from parquet_guard.core.models import (
     ChangeType,
@@ -49,6 +76,7 @@ from parquet_guard.core.reporter import (
     format_diff_sarif,
     format_diff_terminal,
 )
+from parquet_guard.mcp.server import MCPServer
 from parquet_guard.ai import (  # noqa: E402, I001
     diagnose_schema_drift,
     generate_migration_plan,
@@ -56,7 +84,7 @@ from parquet_guard.ai import (  # noqa: E402, I001
     run_evaluation_suite,
 )
 
-__version__ = "0.3.0a1"
+__version__ = "0.4.0a1"
 __all__ = [
     "__version__",
     "inspect_schema",
@@ -69,6 +97,26 @@ __all__ = [
     "analyze_compatibility",
     "audit_dataset",
     "compute_schema_fingerprint",
+    "ConsumerContract",
+    "ConsumerFieldRequirement",
+    "ConsumerGroupSpecification",
+    "ConsumerCompatibilityStatus",
+    "ConsumerImpactEvaluation",
+    "ConsumerImpactReport",
+    "evaluate_single_consumer",
+    "evaluate_consumer_impact",
+    "analyze_dataset_topology",
+    "DatasetTopologyReport",
+    "SchemaGroup",
+    "ExecutableMigrationPlan",
+    "MigrationOperation",
+    "MigrationActionType",
+    "MigrationReadinessStatus",
+    "MigrationVerificationResult",
+    "verify_migration_plan",
+    "generate_html_diagnostic_report",
+    "generate_html_report",
+    "MCPServer",
     "diagnose_schema_drift",
     "propose_contract_evolution",
     "generate_migration_plan",
