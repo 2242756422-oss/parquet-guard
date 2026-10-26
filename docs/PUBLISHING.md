@@ -80,7 +80,7 @@ To link GitHub repository `2242756422-oss/parquet-guard` to PyPI and TestPyPI:
 
 ## 3. Releasing a New Version
 
-When maintainers are ready to publish a release from an approved commit on `main` (e.g., `v0.3.0a1`):
+When maintainers are ready to publish a release from an approved commit on `main` (e.g., `v0.4.0a1`):
 
 ### Option A: Tag-Triggered Release (Standard)
 1. Ensure the release PR has been merged into `main` and all CI checks pass on `main`.
@@ -90,19 +90,19 @@ When maintainers are ready to publish a release from an approved commit on `main
      ```bash
      git checkout main
      git pull --ff-only origin main
-     git tag -s v0.3.0a1 -m "Release v0.3.0a1 (Alpha Prerelease with Schema Copilot)"
-     git tag -v v0.3.0a1
-     git push origin v0.3.0a1
+     git tag -s v0.4.0a1 -m "Release v0.4.0a1 (Consumer-Aware Schema Intelligence Alpha)"
+     git tag -v v0.4.0a1
+     git push origin v0.4.0a1
      ```
    - **Alternative — Unsigned Annotated Tag (`git tag -a`)**:
      Creates a Git tag object with tagger metadata and message, but **without** a cryptographic GPG/SSH signature:
      ```bash
      git checkout main
      git pull --ff-only origin main
-     git tag -a v0.3.0a1 -m "Release v0.3.0a1 (Alpha Prerelease with Schema Copilot)"
-     git push origin v0.3.0a1
+     git tag -a v0.4.0a1 -m "Release v0.4.0a1 (Consumer-Aware Schema Intelligence Alpha)"
+     git push origin v0.4.0a1
      ```
-3. Pushing the `v0.3.0a1` tag triggers `.github/workflows/release.yml`:
+3. Pushing the `v0.4.0a1` tag triggers `.github/workflows/release.yml`:
    - `build-and-verify` checks tag/version agreement, PEP 440 format, and `origin/main` ancestry, builds the wheel and sdist, runs `twine check --strict`, and smoke-tests installation in a clean virtual environment.
    - `publish-pypi` publishes the verified distributions to PyPI via OIDC Trusted Publishing.
    - `create-github-release` runs **only after `publish-pypi` succeeds**, creating the GitHub Release and setting `prerelease: true` or `false` automatically from the PEP 440 version.
@@ -118,7 +118,7 @@ When maintainers are ready to publish a release from an approved commit on `main
 
 ## 4. Verification Checklist Before Tagging
 
-- [ ] `pyproject.toml` version matches target release (e.g., `0.3.0a1`).
+- [ ] `pyproject.toml` version matches target release (e.g., `0.4.0a1`).
 - [ ] `src/parquet_guard/__init__.py` `__version__` matches `pyproject.toml` exactly.
 - [ ] Target release version is a valid canonical PEP 440 version (`X.Y.Z`, `X.Y.ZaN`, `X.Y.ZbN`, or `X.Y.ZrcN`).
 - [ ] `CHANGELOG.md` contains a dated release entry with all notable changes.

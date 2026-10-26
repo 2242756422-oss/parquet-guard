@@ -38,7 +38,7 @@ from parquet_guard.core.migration_verifier import (
 from parquet_guard.core.models import SchemaContract
 
 SERVER_NAME = "parquet-guard-mcp"
-SERVER_VERSION = "0.3.0a1"
+SERVER_VERSION = "0.4.0a1"
 PROTOCOL_VERSION = "2024-11-05"
 SUPPORTED_PROTOCOL_VERSIONS = {"2024-11-05", "2025-03-26"}
 MAX_JSON_PAYLOAD_BYTES = 10 * 1024 * 1024  # 10 MB bound for JSON contracts/plans

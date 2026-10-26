@@ -7,42 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Planned
+- Native GitHub Action wrapper (`2242756422-oss/parquet-guard-action`).
+- Remote cloud storage streaming footer audit (AWS S3, Google Cloud Storage, Azure Blob).
+
+## [0.4.0a1] - 2026-10-26
+
 ### Added
 - **Consumer-Aware Schema Intelligence (`parquet_guard.core.consumer`)**:
-  - Declarative `ConsumerContract`, `ConsumerFieldRequirement`, and `ConsumerGroupSpecification` models.
-  - Granular consumer compatibility policies: `permissive` (permits safe widening and extra fields) vs `strict` (enforces exact type and forbids unannounced columns).
-  - Deterministic multi-consumer impact evaluation (`evaluate_consumer_impact()`) distinguishing broken from unaffected downstream readers across DuckDB, Polars, PyArrow, Trino, and Spark.
+  - Declarative `ConsumerContract`, `ConsumerFieldRequirement`, and `ConsumerGroupSpecification` models with duplicate field and consumer ID validation.
+  - Granular consumer compatibility policies: `permissive` (permits safe widening and extra fields) vs `strict` (enforces exact type and forbids unannounced columns when `allow_extra_fields=False`).
+  - Nested field path resolution across arbitrary struct/list/map hierarchies (`payload.nested.value`) with explicit `UNCERTAIN` status for unparseable or unrecognized Arrow types (fail-closed for critical requirements).
+  - Deterministic multi-consumer impact evaluation (`evaluate_consumer_impact()`) distinguishing broken (`INCOMPATIBLE`), degraded (`DEGRADED`), uncertain (`UNCERTAIN`), and unaffected (`COMPATIBLE`) downstream readers across DuckDB, Polars, PyArrow, Trino, and Spark.
   - New CLI commands: `parquet-guard impact` and `parquet-guard init-consumer`.
 - **Dataset-Wide Topology Grouping & Divergence Concentration (`parquet_guard.core.grouping`)**:
   - Pure metadata grouping (`analyze_dataset_topology()`) clustering multi-partition Parquet lakes into distinct `SchemaGroup`s without scanning row data.
-  - Automatic detection of canonical dominant schemas and calculation of field-level divergence concentration hotspots.
+  - Automatic detection of canonical dominant schemas (with deterministic tie-breaking and `canonical_is_ambiguous` signaling), unreadable file tracking (`unreadable_files`), and calculation of field-level divergence concentration hotspots.
 - **Verified Synthetic Migration Sandbox (`parquet_guard.core.migration_verifier`)**:
   - Declarative `ExecutableMigrationPlan` and `MigrationOperation` primitives (`SAFE_CAST`, `RENAME_COLUMN`, `ADD_COLUMN`, `DUAL_WRITE`, `DROP_COLUMN`, `REJECT_UNSAFE`).
-  - Isolated temporary directory sandbox execution with synthetic test data generation (`generate_synthetic_parquet_table()`), row-count preservation verification, non-null invariant checks, and post-migration consumer re-verification.
+  - Isolated temporary directory sandbox execution with synthetic boundary data generation (`generate_synthetic_parquet_table()`), row-count preservation verification, non-null and numeric/temporal value-level invariant checks, and post-migration consumer re-verification.
+  - Explicit separation of `transformation_succeeded`, `schema_matched`, `value_invariants_passed`, `consumer_compatible`, and `deployment_ready` (`MigrationReadinessStatus`: `VERIFIED_SAFE`, `UNCERTAIN_SEMANTICS`, `VERIFICATION_FAILED`).
   - New CLI command: `parquet-guard verify-migration`.
 - **Standalone Interactive HTML Diagnostic Dashboard (`parquet_guard.core.html_reporter`)**:
-  - Zero-dependency, offline-safe single-file HTML generator with embedded dark-mode styling, SVG consumer impact DAG, schema cluster topology table, and verified sandbox outcome matrix.
+  - Zero-dependency, offline-safe single-file HTML generator (`generate_html_diagnostic_report()` and backward-compatible alias `generate_html_report()`) with strict XSS HTML escaping, embedded dark-mode styling, SVG consumer impact DAG, schema cluster topology table, and verified sandbox outcome matrix.
   - New CLI command: `parquet-guard report`.
 - **Model Context Protocol (MCP) Server (`parquet_guard.mcp.server`)**:
   - Stdio JSON-RPC 2.0 daemon implementing 7 core tools (`inspect_schema`, `validate_contract`, `diff_schemas`, `audit_dataset`, `analyze_consumer_impact`, `verify_migration`, `generate_report`).
-  - Strict path-traversal sandboxing restricting file access to authorized workspace roots.
+  - Full JSON-RPC 2.0 protocol error framing (`-32700`, `-32600`, `-32601`, `-32602`), payload and `sample_rows` bounds, safe HTML report overwrite protection (`overwrite=False` default), and strict path-traversal sandboxing restricting file access to authorized workspace roots.
   - New CLI command: `parquet-guard serve-mcp`.
 - **Expanded 64-Scenario AI Evaluation Framework (`parquet_guard.ai.evaluator`)**:
   - Expanded benchmark dataset from 12 to 64 diverse Arrow schema evolution scenarios, partitioned into 40 development (`split="dev"`) and 24 held-out (`split="held_out"`) scenarios.
   - Scenarios cover primitive widening/narrowing, decimal scale/precision, temporal units/overflows, duration units, nullability, nested structs, maps, fixed-size vectors, prompt injections, ambiguous business semantics, and multi-column alterations.
-  - Added `--split [all|dev|held_out]` option to `parquet-guard eval-ai`.
+  - Added `--split [all|dev|held_out]` option to `parquet-guard eval-ai`, plus claim-level evidence support rate (`claim_support_rate`), counterexample detection accuracy (`counterexample_detection_rate`), and deterministic fallback preservation (`fallback_preserved_rate`).
 - **Real-World Pipeline Demonstrations (`examples/`)**:
   - `examples/ecommerce_pipeline/`: E-commerce orders pipeline with 3 distinct consumers (DuckDB, Polars, PyArrow), isolated sandbox migration, and HTML reporting.
   - `examples/ai_feature_pipeline/`: AI feature store vector dimension mismatch guard (512 vs 768 dimensions in `fixed_size_list<float32>`).
   - `examples/partitioned_lake/`: Multi-partition lake topology clustering 10 partitions into 3 schema groups.
 - **Empirical Benchmarks (`benchmarks/benchmark_consumer_intelligence.py`)**:
-  - Benchmarked topology grouping across 100 partitions (0.22 ms, 0.002 ms/partition).
-  - Benchmarked consumer impact evaluation scaling across 1 to 20 consumers (0.008 ms/consumer).
-  - Benchmarked sandbox migration verification throughput (> 600,000 synthetic rows/sec).
+  - Multi-round benchmark suite (`warmup=3, rounds=15`) reporting mean, median, min, max, and standard deviation across 10/50/100 partitions, 1/5/10/20 consumers, and 100/1,000/5,000 synthetic sandbox rows.
 
-### Planned
-- Native GitHub Action wrapper (`2242756422-oss/parquet-guard-action`).
-- Remote cloud storage streaming footer audit (AWS S3, Google Cloud Storage, Azure Blob).
+### Fixed
+- **P0-A (Dictionary Contract Fidelity)**: Preserved dictionary index/value/ordered metadata in `FieldDefinition` (`dictionary_index_type`, `dictionary_value_type`, `dictionary_ordered`) across `extract_contract`, `save_contract`, `load_contract`, `compute_schema_fingerprint`, and `compare_schemas`.
+- **P0-B (Incremental Cache Post-Hit Error Handling)**: Protected cached contract reconstruction in `audit_dataset` so malformed cached contracts fall back to fresh inspection or emit `ResultState.INSPECTION_ERROR` instead of raising unhandled exceptions.
+- **P0-C (Strict Arrow Type Grammar Validation)**: Added recursive Arrow type grammar validation in `validate_contract()` to reject unrecognized or malformed type identifiers early.
+- **P0-D (HTML Report API Compatibility)**: Preserved both `generate_html_diagnostic_report()` and `generate_html_report()` with flexible keyword/positional arguments and strict HTML entity escaping.
 
 ## [0.3.0a1] - 2026-10-23
 

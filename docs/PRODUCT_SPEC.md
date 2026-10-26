@@ -1,6 +1,6 @@
 # `parquet-guard` Product Specification
 
-> **Version**: 0.3.0a1
+> **Version**: 0.4.0a1
 > **Status**: Approved Alpha Prerelease
 > **Target Audience**: Data Engineers, MLOps Engineers, Analytics Engineers, CI/CD Maintainers
 
