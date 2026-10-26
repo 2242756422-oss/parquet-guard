@@ -210,11 +210,44 @@ def normalize_consumer_impact_report(
     )
 
 
-def sanitize_token(text: str, max_length: int = 500) -> str:
-    """Sanitize strings for secure XML/JSON inclusion, neutralizing delimiter injection."""
+_SENSITIVE_METADATA_PATTERNS = (
+    "secret",
+    "token",
+    "password",
+    "passwd",
+    "api_key",
+    "apikey",
+    "credential",
+    "private_key",
+    "ssn",
+    "pii",
+    "auth",
+)
+
+
+def redact_sensitive_text(text: str) -> str:
+    """Redact values associated with sensitive metadata key patterns before prompt serialization."""
+    if not text:
+        return ""
+    import re
+
+    redacted = text
+    for pat in _SENSITIVE_METADATA_PATTERNS:
+        redacted = re.sub(
+            rf"(?i)({pat}\s*[:=]\s*)(['\"]?)[^'\"\s,;]+(\2)",
+            r"\1[REDACTED]",
+            redacted,
+        )
+    return redacted
+
+
+def sanitize_token(text: str, max_length: int = 500, redact_sensitive: bool = True) -> str:
+    """Sanitize strings for secure XML/JSON inclusion, neutralizing delimiter injection and sensitive values."""
     if not text:
         return ""
     cleaned = text.replace("\x00", "").replace("\r", "")
+    if redact_sensitive:
+        cleaned = redact_sensitive_text(cleaned)
     if len(cleaned) > max_length:
         cleaned = cleaned[:max_length] + " [TRUNCATED]"
     return html.escape(cleaned)

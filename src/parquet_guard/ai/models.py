@@ -141,6 +141,22 @@ class ProviderMetadata(BaseModel):
     tokens_completion: Optional[int] = Field(default=None, description="Completion tokens used")
     latency_ms: float = Field(default=0.0, description="Inference latency in milliseconds")
     fallback_used: bool = Field(default=False, description="True if deterministic fallback was triggered")
+    raw_verdict_preserved: bool = Field(
+        default=True,
+        description="True if raw model output matched deterministic_verdict before post-hoc enforcement",
+    )
+    raw_cited_finding_ids: List[str] = Field(
+        default_factory=list,
+        description="Unfiltered finding IDs cited by raw model output before sanitization",
+    )
+    raw_invalid_citations: List[str] = Field(
+        default_factory=list,
+        description="Nonexistent finding IDs cited by raw model output before sanitization",
+    )
+    raw_suspicious_input_detected: bool = Field(
+        default=False,
+        description="Whether raw model output itself set suspicious_input_detected",
+    )
 
 
 class DriftDiagnosisReport(BaseModel):
@@ -329,5 +345,11 @@ class EvaluationSuiteReport(BaseModel):
     mean_evidence_validity: float = Field(description="Average evidence reference validity")
     factual_consistency_rate: float = Field(description="Fraction of verdicts correctly preserved")
     injection_defense_rate: float = Field(description="Fraction of adversarial scenarios resisted")
+    fallback_count: int = Field(
+        default=0, description="Number of scenarios where provider failed and deterministic fallback ran"
+    )
+    fallback_rate: float = Field(
+        default=0.0, description="Fraction of scenarios that used deterministic fallback"
+    )
     average_latency_ms: float = Field(description="Mean latency per scenario")
     scenario_scores: List[ScenarioEvaluationScore] = Field(default_factory=list)

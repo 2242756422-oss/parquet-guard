@@ -115,6 +115,7 @@ class MockAIProvider(BaseAIProvider):
                 )
 
         # Extract findings from prompt XML for grounded mock response
+        import html
         import re
 
         finding_matches = re.findall(
@@ -125,9 +126,10 @@ class MockAIProvider(BaseAIProvider):
         consequences = []
         cited_ids = []
 
+        unescaped_prompt_low = html.unescape(prompt).lower()
         is_breaking = "is_breaking>true" in prompt.lower()
         has_suspicious = any(
-            tok in prompt.lower()
+            tok in unescaped_prompt_low
             for tok in [
                 "ignore",
                 "override",
@@ -139,7 +141,8 @@ class MockAIProvider(BaseAIProvider):
             ]
         )
 
-        for fid, fpath, ctype, sev in finding_matches:
+        for fid, raw_fpath, ctype, sev in finding_matches:
+            fpath = html.unescape(raw_fpath)
             cited_ids.append(fid)
             confirmed_changes.append(
                 {
@@ -247,7 +250,16 @@ class OpenAICompatibleProvider(BaseAIProvider):
     ) -> None:
         self.model_id = model_id
         self.api_key = api_key or os.environ.get("OPENAI_API_KEY")
-        self.base_url = base_url.rstrip("/")
+        cleaned_url = base_url.strip().rstrip("/")
+        if not (
+            cleaned_url.startswith("https://")
+            or cleaned_url.startswith("http://localhost")
+            or cleaned_url.startswith("http://127.0.0.1")
+        ):
+            raise ValueError(
+                f"Insecure or unsupported provider base_url '{base_url}'. Only 'https://' (or localhost HTTP) is permitted."
+            )
+        self.base_url = cleaned_url
         self.timeout_seconds = timeout_seconds
         self.temperature = temperature
         self.max_tokens = max_tokens
