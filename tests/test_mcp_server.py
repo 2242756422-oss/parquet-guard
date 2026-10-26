@@ -169,3 +169,226 @@ def test_mcp_unknown_tool_and_method() -> None:
     assert resp_method is not None
     assert "error" in resp_method
     assert resp_method["error"]["code"] == -32601
+
+
+def test_mcp_report_overwrite_and_resource_bounds(tmp_path: Path) -> None:
+    """Verify generate_report refuses to overwrite existing files by default and verify_migration bounds sample_rows."""
+    import json
+
+    server = MCPServer(allowed_dirs=[str(tmp_path)])
+    p1 = tmp_path / "data.parquet"
+    _create_sample_parquet(p1)
+
+    report_html = tmp_path / "diag.html"
+    report_html.write_text("existing content", encoding="utf-8")
+
+    # 1. Calling generate_report when file exists and overwrite=False (default) must fail
+    msg_no_overwrite = {
+        "jsonrpc": "2.0",
+        "id": 201,
+        "method": "tools/call",
+        "params": {
+            "name": "generate_report",
+            "arguments": {
+                "output_html": str(report_html),
+                "dataset_dir": str(tmp_path),
+            },
+        },
+    }
+    resp1 = server.process_message(msg_no_overwrite)
+    assert resp1 is not None
+    assert resp1["result"]["isError"] is True
+    assert "already exists" in resp1["result"]["content"][0]["text"]
+    assert report_html.read_text(encoding="utf-8") == "existing content"
+
+    # 2. Calling generate_report with non-HTML extension must fail
+    msg_bad_ext = {
+        "jsonrpc": "2.0",
+        "id": 202,
+        "method": "tools/call",
+        "params": {
+            "name": "generate_report",
+            "arguments": {
+                "output_html": str(tmp_path / "script.py"),
+                "dataset_dir": str(tmp_path),
+            },
+        },
+    }
+    resp2 = server.process_message(msg_bad_ext)
+    assert resp2 is not None
+    assert resp2["result"]["isError"] is True
+    assert "must end with '.html'" in resp2["result"]["content"][0]["text"]
+
+    # 3. Calling generate_report with overwrite=True succeeds
+    msg_overwrite = {
+        "jsonrpc": "2.0",
+        "id": 203,
+        "method": "tools/call",
+        "params": {
+            "name": "generate_report",
+            "arguments": {
+                "output_html": str(report_html),
+                "dataset_dir": str(tmp_path),
+                "overwrite": True,
+            },
+        },
+    }
+    resp3 = server.process_message(msg_overwrite)
+    assert resp3 is not None
+    assert resp3["result"].get("isError") is not True
+    assert "<!DOCTYPE html>" in report_html.read_text(encoding="utf-8")
+
+    # 4. verify_migration bounds sample_rows
+    plan_file = tmp_path / "plan.json"
+    plan_file.write_text(
+        json.dumps(
+            {
+                "plan_id": "M1",
+                "title": "t",
+                "description": "d",
+                "source_contract": {"fields": [{"name": "user_id", "type": "int64"}]},
+                "target_contract": {"fields": [{"name": "user_id", "type": "int64"}]},
+                "operations": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    msg_excessive_rows = {
+        "jsonrpc": "2.0",
+        "id": 204,
+        "method": "tools/call",
+        "params": {
+            "name": "verify_migration",
+            "arguments": {
+                "migration_plan_path": str(plan_file),
+                "sample_rows": 999999,
+            },
+        },
+    }
+    resp4 = server.process_message(msg_excessive_rows)
+    assert resp4 is not None
+    assert resp4["result"]["isError"] is True
+    assert "outside allowed bounds" in resp4["result"]["content"][0]["text"]
+
+
+def test_mcp_real_subprocess_stdio_roundtrip(tmp_path: Path) -> None:
+    """Launch `parquet-guard serve-mcp` as a real OS subprocess and verify stdio JSON-RPC framing & error codes."""
+    import json
+    import subprocess
+    import sys
+
+    sample_file = tmp_path / "events.parquet"
+    _create_sample_parquet(sample_file)
+
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "parquet_guard.cli",
+            "serve-mcp",
+            "--allowed-dir",
+            str(tmp_path),
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert proc.stdin is not None
+    assert proc.stdout is not None
+
+    from typing import Any
+
+    def send_and_recv(payload_str: str) -> dict[str, Any]:
+        assert proc.stdin is not None and proc.stdout is not None
+        proc.stdin.write(payload_str + "\n")
+        proc.stdin.flush()
+        line = proc.stdout.readline()
+        assert line, "Expected JSON-RPC response line from subprocess stdout"
+        parsed: dict[str, Any] = json.loads(line)
+        return parsed
+
+    try:
+        # 1. Initialize handshake
+        r_init = send_and_recv(
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {"protocolVersion": PROTOCOL_VERSION},
+                }
+            )
+        )
+        assert r_init["id"] == 1
+        assert r_init["result"]["serverInfo"]["name"] == SERVER_NAME
+
+        # 2. Send notifications/initialized (no response expected) + ping
+        proc.stdin.write(json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n")
+        proc.stdin.flush()
+        r_ping = send_and_recv(json.dumps({"jsonrpc": "2.0", "id": 2, "method": "ping"}))
+        assert r_ping["id"] == 2
+        assert r_ping["result"] == {}
+
+        # 3. tools/list
+        r_list = send_and_recv(json.dumps({"jsonrpc": "2.0", "id": 3, "method": "tools/list"}))
+        assert r_list["id"] == 3
+        assert len(r_list["result"]["tools"]) == 7
+
+        # 4. tools/call inspect_schema
+        r_call = send_and_recv(
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 4,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "inspect_schema",
+                        "arguments": {"file_path": str(sample_file)},
+                    },
+                }
+            )
+        )
+        assert r_call["id"] == 4
+        assert r_call["result"].get("isError") is not True
+        assert "user_id" in r_call["result"]["content"][0]["text"]
+
+        # 5. Malformed JSON line -> -32700 Parse error
+        r_parse_err = send_and_recv("{not valid json")
+        assert r_parse_err["error"]["code"] == -32700
+
+        # 6. Invalid JSON-RPC structure -> -32600 Invalid Request
+        r_inv_req = send_and_recv(json.dumps({"jsonrpc": "1.0", "id": 6, "method": "ping"}))
+        assert r_inv_req["error"]["code"] == -32600
+
+        # 7. Invalid params on tools/call -> -32602 Invalid params
+        r_inv_params = send_and_recv(
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 7,
+                    "method": "tools/call",
+                    "params": {"name": "", "arguments": "not-a-dict"},
+                }
+            )
+        )
+        assert r_inv_params["error"]["code"] == -32602
+
+        # 8. Missing required argument inside tool arguments -> tool error
+        r_missing_arg = send_and_recv(
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 8,
+                    "method": "tools/call",
+                    "params": {"name": "inspect_schema", "arguments": {}},
+                }
+            )
+        )
+        assert r_missing_arg["result"]["isError"] is True
+        assert "Missing required argument" in r_missing_arg["result"]["content"][0]["text"]
+
+    finally:
+        proc.stdin.close()
+        proc.wait(timeout=5)
+    assert proc.returncode == 0
