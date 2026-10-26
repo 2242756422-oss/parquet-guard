@@ -99,7 +99,7 @@ def _generate_impact_graph_svg(impact_report: Optional[ConsumerImpactReport]) ->
         elif e.status in ("CONDITIONALLY_COMPATIBLE", "POTENTIALLY_BREAKING"):
             marker = "arrow-amber"
             stroke = "#f59e0b"
-        elif e.status == "INCOMPATIBLE":
+        elif e.status in ("INCOMPATIBLE", "UNCERTAIN"):
             marker = "arrow-red"
             stroke = "#ef4444"
 
@@ -136,7 +136,7 @@ def _generate_impact_graph_svg(impact_report: Optional[ConsumerImpactReport]) ->
             elif n.status in ("CONDITIONALLY_COMPATIBLE", "POTENTIALLY_BREAKING"):
                 border = "#f59e0b"
                 badge_color = "#f59e0b"
-            elif n.status == "INCOMPATIBLE":
+            elif n.status in ("INCOMPATIBLE", "UNCERTAIN"):
                 border = "#ef4444"
                 badge_color = "#ef4444"
 
@@ -202,6 +202,8 @@ def generate_html_diagnostic_report(
                 + ev.type_mismatches
                 + ev.nullability_violations
                 + ev.dimension_mismatches
+                + ev.path_resolution_errors
+                + ev.uncertain_fields
             )
             viol_str = ", ".join(violations) if violations else "None"
             recs_str = "<br>".join(ev.recommendations) if ev.recommendations else "None required"
@@ -285,10 +287,12 @@ def generate_html_diagnostic_report(
           </div>
           <div class="card-body">
             <div class="metrics-grid">
-              <div class="metric"><span class="metric-label">Rows Tested</span><span class="metric-value">{migration_result.rows_tested}</span></div>
-              <div class="metric"><span class="metric-label">Row Count Invariant</span><span class="metric-value">{"PASSED" if migration_result.row_count_preserved else "FAILED"}</span></div>
+              <div class="metric"><span class="metric-label">Readiness</span><span class="metric-value">{_escape(migration_result.readiness_status.value)}</span></div>
+              <div class="metric"><span class="metric-label">Transformation</span><span class="metric-value">{"PASSED" if migration_result.transformation_succeeded else "FAILED"}</span></div>
+              <div class="metric"><span class="metric-label">Row Count ({migration_result.rows_tested})</span><span class="metric-value">{"PASSED" if migration_result.row_count_preserved else "FAILED"}</span></div>
               <div class="metric"><span class="metric-label">Schema Matched</span><span class="metric-value">{"PASSED" if migration_result.schema_matched else "FAILED"}</span></div>
               <div class="metric"><span class="metric-label">Value Invariants</span><span class="metric-value">{"PASSED" if migration_result.value_invariants_passed else "FAILED"}</span></div>
+              <div class="metric"><span class="metric-label">Consumer Compat</span><span class="metric-value">{"PASSED" if migration_result.consumer_compatible else "FAILED"}</span></div>
             </div>
             <p class="summary-text mt-3">{_escape(migration_result.summary)}</p>
         """

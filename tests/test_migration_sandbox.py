@@ -228,3 +228,290 @@ def test_reject_unsafe_primitive() -> None:
     res = verify_migration_plan(plan, sample_rows=10)
     assert res.success is False
     assert any("rejected as unsafe" in err.lower() for err in res.errors)
+
+
+def test_p0_b_negative_decimal_precision_or_scale_loss() -> None:
+    """Negative test (1): Decimal precision or scale loss is rejected by safe cast."""
+    from parquet_guard.core.migration_verifier import MigrationReadinessStatus
+
+    source_contract = SchemaContract(fields=[FieldDefinition(name="price", type="decimal128(10, 4)")])
+    target_contract = SchemaContract(fields=[FieldDefinition(name="price", type="decimal128(10, 2)")])
+    plan = ExecutableMigrationPlan(
+        plan_id="MIG-DEC-LOSS",
+        title="Decimal scale truncation",
+        description="Truncating scale 4 to 2 loses fractional precision",
+        source_contract=source_contract,
+        target_contract=target_contract,
+        operations=[
+            MigrationOperation(
+                action=MigrationActionType.SAFE_CAST,
+                source_column="price",
+                target_type="decimal128(10, 2)",
+                description="Attempt scale truncation",
+            )
+        ],
+    )
+    res = verify_migration_plan(plan, sample_rows=10)
+    assert res.success is False
+    assert res.transformation_succeeded is False
+    assert res.deployment_ready is False
+    assert res.readiness_status == MigrationReadinessStatus.TRANSFORMATION_FAILED
+
+
+def test_p0_b_negative_unexpected_extra_output_columns() -> None:
+    """Negative test (4): Unexpected extra columns in output are rejected under strict schema validation."""
+    from parquet_guard.core.migration_verifier import MigrationReadinessStatus
+
+    source_contract = SchemaContract(
+        fields=[
+            FieldDefinition(name="id", type="int64"),
+            FieldDefinition(name="legacy_col", type="string"),
+        ]
+    )
+    target_contract = SchemaContract(
+        fields=[
+            FieldDefinition(name="id", type="int64"),
+        ]
+    )
+    # Plan forgets to DROP legacy_col
+    plan = ExecutableMigrationPlan(
+        plan_id="MIG-EXTRA-COL",
+        title="Incomplete drop migration",
+        description="Leaves unexpected extra column in migrated output",
+        source_contract=source_contract,
+        target_contract=target_contract,
+        operations=[],
+    )
+    res = verify_migration_plan(plan, sample_rows=10)
+    assert res.transformation_succeeded is True
+    assert res.schema_matched is False
+    assert "legacy_col" in res.unexpected_output_columns
+    assert res.deployment_ready is False
+    assert res.success is False
+    assert res.readiness_status == MigrationReadinessStatus.SCHEMA_MISMATCH
+
+
+def test_p0_b_negative_missing_required_output_columns() -> None:
+    """Negative test (5): Missing required target columns are rejected."""
+    from parquet_guard.core.migration_verifier import MigrationReadinessStatus
+
+    source_contract = SchemaContract(fields=[FieldDefinition(name="id", type="int64")])
+    target_contract = SchemaContract(
+        fields=[
+            FieldDefinition(name="id", type="int64"),
+            FieldDefinition(name="currency", type="string"),
+        ]
+    )
+    # Plan omits ADD_COLUMN for currency
+    plan = ExecutableMigrationPlan(
+        plan_id="MIG-MISSING-COL",
+        title="Missing currency column",
+        description="Omits required target column",
+        source_contract=source_contract,
+        target_contract=target_contract,
+        operations=[],
+    )
+    res = verify_migration_plan(plan, sample_rows=10)
+    assert res.transformation_succeeded is True
+    assert res.schema_matched is False
+    assert "currency" in res.missing_output_columns
+    assert res.deployment_ready is False
+    assert res.success is False
+    assert res.readiness_status == MigrationReadinessStatus.SCHEMA_MISMATCH
+
+
+def test_p0_b_negative_invalid_added_column_type() -> None:
+    """Negative test (6): Invalid added-column type fails transformation instead of silently defaulting to string."""
+    from parquet_guard.core.migration_verifier import MigrationReadinessStatus
+
+    source_contract = SchemaContract(fields=[FieldDefinition(name="id", type="int64")])
+    target_contract = SchemaContract(
+        fields=[
+            FieldDefinition(name="id", type="int64"),
+            FieldDefinition(name="new_col", type="hyper_tensor<int128>"),
+        ]
+    )
+    plan = ExecutableMigrationPlan(
+        plan_id="MIG-BAD-TYPE",
+        title="Invalid added column type",
+        description="Uses unrecognized Arrow type on ADD_COLUMN",
+        source_contract=source_contract,
+        target_contract=target_contract,
+        operations=[
+            MigrationOperation(
+                action=MigrationActionType.ADD_COLUMN,
+                source_column="new_col",
+                target_column="new_col",
+                target_type="hyper_tensor<int128>",
+                default_value="x",
+                description="Add column with bogus type",
+            )
+        ],
+    )
+    res = verify_migration_plan(plan, sample_rows=10)
+    assert res.transformation_succeeded is False
+    assert res.deployment_ready is False
+    assert res.success is False
+    assert res.readiness_status == MigrationReadinessStatus.TRANSFORMATION_FAILED
+    assert any("unsupported" in e.lower() or "unrecognized" in e.lower() for e in res.errors)
+
+
+def test_p0_b_negative_nullability_violation() -> None:
+    """Negative test (7): Nullability violation (nullable source into non-null target or null default into non-null)."""
+    from parquet_guard.core.migration_verifier import MigrationReadinessStatus
+
+    source_contract = SchemaContract(fields=[FieldDefinition(name="id", type="int32", nullable=True)])
+    target_contract = SchemaContract(fields=[FieldDefinition(name="id", type="int64", nullable=False)])
+    plan = ExecutableMigrationPlan(
+        plan_id="MIG-NULL-VIOLATION",
+        title="Nullable source into non-null target",
+        description="Source contains nulls which violate target non-null constraint",
+        source_contract=source_contract,
+        target_contract=target_contract,
+        operations=[
+            MigrationOperation(
+                action=MigrationActionType.SAFE_CAST,
+                source_column="id",
+                target_type="int64",
+                description="Cast nullable int32 to int64",
+            )
+        ],
+    )
+    res = verify_migration_plan(plan, sample_rows=10)
+    assert res.transformation_succeeded is True
+    assert res.value_invariants_passed is False
+    assert res.deployment_ready is False
+    assert res.success is False
+    assert res.readiness_status == MigrationReadinessStatus.INVARIANT_VIOLATION
+
+
+def test_p0_b_negative_legacy_consumer_broken_marks_deployment_not_ready() -> None:
+    """Negative test (8): Legacy consumer broken by valid transformation sets transformation_succeeded=True but success=False."""
+    from parquet_guard.core.migration_verifier import MigrationReadinessStatus
+
+    source_contract = SchemaContract(fields=[FieldDefinition(name="account_id", type="int64")])
+    target_contract = SchemaContract(fields=[FieldDefinition(name="account_id", type="string")])
+    plan = ExecutableMigrationPlan(
+        plan_id="MIG-LEGACY-BREAK-P0B",
+        title="Cast account_id to string",
+        description="Valid cast that breaks critical legacy consumer",
+        source_contract=source_contract,
+        target_contract=target_contract,
+        operations=[
+            MigrationOperation(
+                action=MigrationActionType.SAFE_CAST,
+                source_column="account_id",
+                target_type="string",
+                description="Cast int64 to string",
+            )
+        ],
+    )
+    legacy_consumer = ConsumerContract(
+        consumer_id="legacy-warehouse",
+        consumer_name="Legacy Data Warehouse",
+        fields=[
+            ConsumerFieldRequirement(
+                name="account_id",
+                required=True,
+                permitted_types=["int64"],
+                critical=True,
+            )
+        ],
+    )
+    res = verify_migration_plan(plan, consumers=[legacy_consumer], sample_rows=20)
+    assert res.transformation_succeeded is True
+    assert res.schema_matched is True
+    assert res.value_invariants_passed is True
+    assert res.consumer_compatible is False
+    assert "legacy-warehouse" in res.blocking_consumers
+    assert res.readiness_status == MigrationReadinessStatus.CONSUMER_BREAKING
+    assert res.deployment_ready is False
+    assert res.success is False
+
+
+def test_p0_b_negative_multi_operation_partial_failure() -> None:
+    """Negative test (9 & 10): Multi-operation partial failure records exact completed step count and fails."""
+    from parquet_guard.core.migration_verifier import MigrationReadinessStatus
+
+    source_contract = SchemaContract(
+        fields=[
+            FieldDefinition(name="a", type="int32"),
+            FieldDefinition(name="b", type="string"),
+        ]
+    )
+    target_contract = SchemaContract(
+        fields=[
+            FieldDefinition(name="a_wide", type="int64"),
+            FieldDefinition(name="b", type="int32"),
+        ]
+    )
+    plan = ExecutableMigrationPlan(
+        plan_id="MIG-PARTIAL-FAIL",
+        title="Multi-step migration failing at step 3",
+        description="Step 1 & 2 succeed, step 3 fails casting arbitrary string to int32",
+        source_contract=source_contract,
+        target_contract=target_contract,
+        operations=[
+            MigrationOperation(
+                action=MigrationActionType.SAFE_CAST,
+                source_column="a",
+                target_type="int64",
+                description="Step 1: Widen a",
+            ),
+            MigrationOperation(
+                action=MigrationActionType.RENAME_COLUMN,
+                source_column="a",
+                target_column="a_wide",
+                description="Step 2: Rename a to a_wide",
+            ),
+            MigrationOperation(
+                action=MigrationActionType.SAFE_CAST,
+                source_column="b",
+                target_type="int32",
+                description="Step 3: Fail casting string to int32",
+            ),
+        ],
+    )
+    res = verify_migration_plan(plan, sample_rows=10)
+    assert res.operations_total == 3
+    assert res.operations_completed == 2
+    assert res.transformation_succeeded is False
+    assert res.deployment_ready is False
+    assert res.success is False
+    assert res.readiness_status == MigrationReadinessStatus.TRANSFORMATION_FAILED
+
+
+def test_p0_b_negative_missing_business_semantics() -> None:
+    """Negative test (12): Migration step requiring domain business semantics is marked UNCERTAIN_SEMANTICS and not deployment-ready."""
+    from parquet_guard.core.migration_verifier import MigrationReadinessStatus
+
+    source_contract = SchemaContract(fields=[FieldDefinition(name="amount_usd", type="double")])
+    target_contract = SchemaContract(
+        fields=[
+            FieldDefinition(name="amount_usd", type="double"),
+            FieldDefinition(name="amount_eur", type="double"),
+        ]
+    )
+    plan = ExecutableMigrationPlan(
+        plan_id="MIG-SEMANTICS",
+        title="FX conversion requiring external rate table",
+        description="Requires historical FX rate lookup",
+        source_contract=source_contract,
+        target_contract=target_contract,
+        operations=[
+            MigrationOperation(
+                action=MigrationActionType.DUAL_WRITE,
+                source_column="amount_usd",
+                target_column="amount_eur",
+                requires_business_semantics=True,
+                description="Placeholder copy; actual FX conversion requires historical rates",
+            )
+        ],
+    )
+    res = verify_migration_plan(plan, sample_rows=10)
+    assert res.transformation_succeeded is True
+    assert res.schema_matched is True
+    assert res.uncertain_semantics is True
+    assert res.readiness_status == MigrationReadinessStatus.UNCERTAIN_SEMANTICS
+    assert res.deployment_ready is False
+    assert res.success is False
