@@ -307,3 +307,396 @@ def test_consumer_group_specification_roundtrip() -> None:
     assert len(parsed.consumers) == 2
     assert parsed.get_consumer("c1") is not None
     assert parsed.get_consumer("nonexistent") is None
+
+
+def test_p0_short_circuit_exact_permitted_type_with_contradictory_list_size() -> None:
+    """Regression 1: Exact permitted type with contradictory list_size must be INCOMPATIBLE."""
+    schema = SchemaContract(
+        fields=[
+            FieldDefinition(
+                name="embedding",
+                type="fixed_size_list<item: float32>[512]",
+                list_size=512,
+            )
+        ]
+    )
+    consumer = ConsumerContract(
+        consumer_id="vec-consumer",
+        consumer_name="Vector Consumer",
+        fields=[
+            ConsumerFieldRequirement(
+                name="embedding",
+                required=True,
+                permitted_types=[
+                    "fixed_size_list<item: float32>[512]",
+                    "fixed_size_list<item: float32>[768]",
+                ],
+                list_size=768,
+            )
+        ],
+    )
+    ev = evaluate_single_consumer(schema, consumer)
+    assert ev.status == ConsumerCompatibilityStatus.INCOMPATIBLE
+    assert "embedding" in ev.dimension_mismatches
+    assert "768" in (ev.field_evaluations[0].violation_reason or "")
+
+
+def test_p0_short_circuit_exact_permitted_type_with_contradictory_decimal_scale() -> None:
+    """Regression 2: Exact permitted type with contradictory decimal scale must be INCOMPATIBLE."""
+    schema = SchemaContract(
+        fields=[
+            FieldDefinition(
+                name="price",
+                type="decimal128(12, 4)",
+                precision=12,
+                scale=4,
+            )
+        ]
+    )
+    consumer = ConsumerContract(
+        consumer_id="ledger-consumer",
+        consumer_name="Ledger Consumer",
+        fields=[
+            ConsumerFieldRequirement(
+                name="price",
+                required=True,
+                permitted_types=["decimal128(12, 4)", "decimal128(12, 2)"],
+                scale=2,
+            )
+        ],
+    )
+    ev = evaluate_single_consumer(schema, consumer)
+    assert ev.status == ConsumerCompatibilityStatus.INCOMPATIBLE
+    assert "price" in ev.type_mismatches
+    assert "scale" in (ev.field_evaluations[0].violation_reason or "").lower()
+
+
+def test_p0_short_circuit_exact_permitted_type_with_contradictory_timestamp_unit() -> None:
+    """Regression 3: Exact permitted type with contradictory timestamp unit/tz must not short-circuit."""
+    schema = SchemaContract(
+        fields=[
+            FieldDefinition(
+                name="event_time",
+                type="timestamp[ns, tz=UTC]",
+                time_unit="ns",
+                timezone="UTC",
+            )
+        ]
+    )
+    # Strict policy consumer requiring 'ms' even though 'timestamp[ns, tz=UTC]' was listed in permitted_types
+    consumer_unit = ConsumerContract(
+        consumer_id="ts-consumer-strict",
+        consumer_name="Strict Timestamp Consumer",
+        compatibility_policy="strict",
+        fields=[
+            ConsumerFieldRequirement(
+                name="event_time",
+                required=True,
+                permitted_types=["timestamp[ns, tz=UTC]", "timestamp[ms, tz=UTC]"],
+                time_unit="ms",
+                timezone="UTC",
+            )
+        ],
+    )
+    ev_unit = evaluate_single_consumer(schema, consumer_unit)
+    assert ev_unit.status == ConsumerCompatibilityStatus.INCOMPATIBLE
+    assert "unit" in (ev_unit.field_evaluations[0].violation_reason or "").lower()
+
+    # Contradictory timezone even in permissive mode
+    consumer_tz = ConsumerContract(
+        consumer_id="ts-consumer-tz",
+        consumer_name="TZ Consumer",
+        compatibility_policy="permissive",
+        fields=[
+            ConsumerFieldRequirement(
+                name="event_time",
+                required=True,
+                permitted_types=["timestamp[ns, tz=UTC]"],
+                time_unit="ns",
+                timezone="America/New_York",
+            )
+        ],
+    )
+    ev_tz = evaluate_single_consumer(schema, consumer_tz)
+    assert ev_tz.status == ConsumerCompatibilityStatus.INCOMPATIBLE
+    assert "timezone" in (ev_tz.field_evaluations[0].violation_reason or "").lower()
+
+
+def test_p0_exact_type_with_valid_additional_constraints() -> None:
+    """Regression 4: Exact permitted type with valid additional constraints is COMPATIBLE."""
+    schema = SchemaContract(
+        fields=[
+            FieldDefinition(name="price", type="decimal128(10, 2)", precision=10, scale=2),
+            FieldDefinition(
+                name="embedding",
+                type="fixed_size_list<item: float32>[256]",
+                list_size=256,
+            ),
+            FieldDefinition(
+                name="ts",
+                type="timestamp[ms, tz=UTC]",
+                time_unit="ms",
+                timezone="UTC",
+            ),
+        ]
+    )
+    consumer = ConsumerContract(
+        consumer_id="valid-all",
+        consumer_name="Valid Multi-Constraint Consumer",
+        fields=[
+            ConsumerFieldRequirement(
+                name="price",
+                permitted_types=["decimal128(10, 2)"],
+                precision=10,
+                scale=2,
+                allow_null=True,
+            ),
+            ConsumerFieldRequirement(
+                name="embedding",
+                permitted_types=["fixed_size_list<item: float32>[256]"],
+                list_size=256,
+            ),
+            ConsumerFieldRequirement(
+                name="ts",
+                permitted_types=["timestamp[ms, tz=UTC]"],
+                time_unit="ms",
+                timezone="UTC",
+            ),
+        ],
+    )
+    ev = evaluate_single_consumer(schema, consumer)
+    assert ev.status == ConsumerCompatibilityStatus.COMPATIBLE
+    assert all(fe.status == ConsumerCompatibilityStatus.COMPATIBLE for fe in ev.field_evaluations)
+
+
+def test_p0_several_independently_conditional_constraints() -> None:
+    """Regression 5: Several independently conditional constraints are all evaluated and composed."""
+    schema = SchemaContract(
+        fields=[
+            FieldDefinition(
+                name="amount",
+                type="decimal128(18, 2)",
+                nullable=True,
+                precision=18,
+                scale=2,
+            )
+        ]
+    )
+    consumer = ConsumerContract(
+        consumer_id="cond-consumer",
+        consumer_name="Conditional Multi-Constraint Consumer",
+        compatibility_policy="permissive",
+        strict_nullability=False,
+        fields=[
+            ConsumerFieldRequirement(
+                name="amount",
+                required=True,
+                # Producer decimal128(18, 2) widens safely to consumer's permitted decimal256(18, 2)
+                permitted_types=["decimal256(18, 2)"],
+                # Producer precision 18 > consumer precision bound 12 (conditional warning)
+                precision=12,
+                scale=2,
+                # Producer is nullable while consumer requests allow_null=False with strict_nullability=False
+                allow_null=False,
+            )
+        ],
+    )
+    ev = evaluate_single_consumer(schema, consumer)
+    assert ev.status == ConsumerCompatibilityStatus.CONDITIONALLY_COMPATIBLE
+    reason = ev.field_evaluations[0].violation_reason or ""
+    assert "safe widening" in reason.lower()
+    assert "precision" in reason.lower()
+    assert "null" in reason.lower()
+
+
+def test_p0_unsupported_or_unparseable_type_representations() -> None:
+    """Regression 6: Unsupported or unparseable type representations must not pass as compatible."""
+    schema_bad_prod = SchemaContract(
+        fields=[FieldDefinition(name="mystery", type="unsupported_ weird_type<123>")]
+    )
+    consumer_any = ConsumerContract(
+        consumer_id="c-any",
+        consumer_name="Any Type Consumer",
+        fields=[ConsumerFieldRequirement(name="mystery", required=True)],
+    )
+    ev1 = evaluate_single_consumer(schema_bad_prod, consumer_any)
+    # Insufficient knowledge is UNCERTAIN (never COMPATIBLE) and blocks a critical requirement.
+    assert ev1.status == ConsumerCompatibilityStatus.UNCERTAIN
+    assert ev1.is_blocking is True
+    assert "unsupported" in (ev1.field_evaluations[0].violation_reason or "").lower()
+
+    # Even if consumer explicitly put the same unparseable type in permitted_types
+    consumer_matching_bad = ConsumerContract(
+        consumer_id="c-bad",
+        consumer_name="Matching Bad Type Consumer",
+        fields=[
+            ConsumerFieldRequirement(
+                name="mystery",
+                required=True,
+                permitted_types=["unsupported_ weird_type<123>"],
+            )
+        ],
+    )
+    ev2 = evaluate_single_consumer(schema_bad_prod, consumer_matching_bad)
+    # A string-identical but unrecognized type still cannot be verified.
+    assert ev2.status == ConsumerCompatibilityStatus.UNCERTAIN
+    assert ev2.is_blocking is True
+
+    # Valid producer type, but consumer specifies an unparseable permitted_type
+    schema_good = SchemaContract(fields=[FieldDefinition(name="id", type="int64")])
+    consumer_bad_req = ConsumerContract(
+        consumer_id="c-bad-req",
+        consumer_name="Bad Permitted Type Consumer",
+        fields=[
+            ConsumerFieldRequirement(
+                name="id",
+                required=True,
+                permitted_types=["bogus_int_999"],
+            )
+        ],
+    )
+    ev3 = evaluate_single_consumer(schema_good, consumer_bad_req)
+    assert ev3.status == ConsumerCompatibilityStatus.INCOMPATIBLE
+
+
+def test_p0_producer_wider_than_consumer_is_incompatible() -> None:
+    """Producer-side widening beyond consumer's permitted type (narrowing into consumer) is INCOMPATIBLE."""
+    # Producer emits int64, consumer only permits int32 -> reading int64 into int32 risks overflow!
+    schema = SchemaContract(fields=[FieldDefinition(name="user_id", type="int64")])
+    consumer = ConsumerContract(
+        consumer_id="int32-reader",
+        consumer_name="32-bit Reader",
+        compatibility_policy="permissive",
+        fields=[
+            ConsumerFieldRequirement(
+                name="user_id",
+                required=True,
+                permitted_types=["int32"],
+            )
+        ],
+    )
+    ev = evaluate_single_consumer(schema, consumer)
+    assert ev.status == ConsumerCompatibilityStatus.INCOMPATIBLE
+    assert "user_id" in ev.type_mismatches
+
+
+def test_p0_nested_field_paths_traversal_and_edge_cases() -> None:
+    """Verify nested path resolution across Struct, List, Map, escaped literal dots, and failure modes."""
+    schema = SchemaContract(
+        fields=[
+            # 1. Nested struct -> struct -> primitive
+            FieldDefinition(
+                name="payload",
+                type="struct<event_time: timestamp[ms, tz=UTC], meta: struct<source: string>>",
+                children=[
+                    FieldDefinition(
+                        name="event_time",
+                        type="timestamp[ms, tz=UTC]",
+                        time_unit="ms",
+                        timezone="UTC",
+                    ),
+                    FieldDefinition(
+                        name="meta",
+                        type="struct<source: string>",
+                        children=[FieldDefinition(name="source", type="string")],
+                    ),
+                ],
+            ),
+            # 2. List of structs
+            FieldDefinition(
+                name="items",
+                type="list<item: struct<sku: string, qty: int32>>",
+                children=[
+                    FieldDefinition(
+                        name="item",
+                        type="struct<sku: string, qty: int32>",
+                        children=[
+                            FieldDefinition(name="sku", type="string"),
+                            FieldDefinition(name="qty", type="int32"),
+                        ],
+                    )
+                ],
+            ),
+            # 3. Map key/value
+            FieldDefinition(
+                name="tags",
+                type="map<string, int64>",
+                children=[
+                    FieldDefinition(name="key", type="string"),
+                    FieldDefinition(name="value", type="int64"),
+                ],
+            ),
+            # 4. Literal field name containing a dot
+            FieldDefinition(name="metric.v1", type="float64"),
+            # 5. Struct with duplicate child names (malformed / ambiguous)
+            FieldDefinition(
+                name="dup_struct",
+                type="struct<x: int32, x: int64>",
+                children=[
+                    FieldDefinition(name="x", type="int32"),
+                    FieldDefinition(name="x", type="int64"),
+                ],
+            ),
+            # 6. Scalar leaf
+            FieldDefinition(name="scalar_id", type="int64"),
+        ]
+    )
+
+    # Valid nested consumer
+    valid_nested_consumer = ConsumerContract(
+        consumer_id="nested-ok",
+        consumer_name="Nested Reader",
+        fields=[
+            ConsumerFieldRequirement(
+                name="payload.event_time",
+                permitted_types=["timestamp[ms, tz=UTC]"],
+                time_unit="ms",
+                timezone="UTC",
+            ),
+            ConsumerFieldRequirement(
+                name="payload.meta.source",
+                permitted_types=["string"],
+            ),
+            ConsumerFieldRequirement(
+                name="items.item.sku",
+                permitted_types=["string"],
+            ),
+            ConsumerFieldRequirement(
+                name="tags.key",
+                permitted_types=["string"],
+            ),
+            ConsumerFieldRequirement(
+                name="tags.value",
+                permitted_types=["int64"],
+            ),
+            ConsumerFieldRequirement(
+                name=r"metric\.v1",
+                permitted_types=["float64"],
+            ),
+        ],
+    )
+    ev_ok = evaluate_single_consumer(schema, valid_nested_consumer)
+    assert ev_ok.status == ConsumerCompatibilityStatus.COMPATIBLE
+    assert len(ev_ok.missing_required_fields) == 0
+
+    # Edge cases: duplicate child name, missing intermediate node, traversal through scalar leaf
+    edge_consumer = ConsumerContract(
+        consumer_id="nested-edge",
+        consumer_name="Edge Case Reader",
+        fields=[
+            ConsumerFieldRequirement(name="dup_struct.x", permitted_types=["int32"]),
+            ConsumerFieldRequirement(name="payload.missing_node.leaf", permitted_types=["string"]),
+            ConsumerFieldRequirement(name="scalar_id.sub_field", permitted_types=["int64"]),
+        ],
+    )
+    ev_edge = evaluate_single_consumer(schema, edge_consumer)
+    assert ev_edge.status == ConsumerCompatibilityStatus.INCOMPATIBLE
+    reasons_by_name = {fe.field_name: fe.violation_reason or "" for fe in ev_edge.field_evaluations}
+    assert "duplicate" in reasons_by_name["dup_struct.x"].lower()
+    assert "missing" in reasons_by_name["payload.missing_node.leaf"].lower()
+    assert (
+        "non-nested" in reasons_by_name["scalar_id.sub_field"].lower()
+        or "scalar" in reasons_by_name["scalar_id.sub_field"].lower()
+        or "cannot traverse" in reasons_by_name["scalar_id.sub_field"].lower()
+    )
+
