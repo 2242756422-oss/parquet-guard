@@ -700,3 +700,86 @@ def test_p0_nested_field_paths_traversal_and_edge_cases() -> None:
         or "cannot traverse" in reasons_by_name["scalar_id.sub_field"].lower()
     )
 
+
+def test_p0_d_technical_incompatibility_distinct_from_ci_blocking() -> None:
+    """P0-D: A non-critical type mismatch remains technically INCOMPATIBLE while is_blocking=False."""
+    schema = SchemaContract(
+        fields=[
+            FieldDefinition(name="primary_id", type="int64"),
+            FieldDefinition(name="aux_tag", type="int32"),
+        ]
+    )
+    consumer = ConsumerContract(
+        consumer_id="noncritical-reader",
+        consumer_name="Reader With Non-Critical Field",
+        fields=[
+            ConsumerFieldRequirement(
+                name="primary_id",
+                required=True,
+                permitted_types=["int64"],
+                critical=True,
+            ),
+            ConsumerFieldRequirement(
+                name="aux_tag",
+                required=True,
+                permitted_types=["string"],
+                critical=False,
+            ),
+        ],
+    )
+    ev = evaluate_single_consumer(schema, consumer)
+    # Technical compatibility is INCOMPATIBLE (not downgraded to POTENTIALLY_BREAKING)
+    assert ev.status == ConsumerCompatibilityStatus.INCOMPATIBLE
+    # CI blocking policy respects critical=False
+    assert ev.is_blocking is False
+    assert "aux_tag" in ev.type_mismatches
+    assert "aux_tag" in ev.non_blocking_violations
+    assert len(ev.blocking_fields) == 0
+
+    report = evaluate_consumer_impact(schema, [consumer], dataset_identifier="test_ds")
+    assert report.overall_status == ConsumerCompatibilityStatus.INCOMPATIBLE
+    assert report.incompatible_consumers == 1
+    assert report.blocking_consumers == 0
+    assert report.is_blocking is False
+
+
+def test_p0_c_nested_nullability_and_unescaped_literal_dot_rejection() -> None:
+    """P0-C: Verify ancestor/leaf nested nullability and rejection of unescaped literal dots."""
+    schema = SchemaContract(
+        fields=[
+            FieldDefinition(
+                name="envelope",
+                type="struct<id: int64>",
+                nullable=True,
+                children=[FieldDefinition(name="id", type="int64", nullable=False)],
+            ),
+            FieldDefinition(name="metric.v1", type="float64", nullable=False),
+        ]
+    )
+    # 1. Ancestor struct is nullable while leaf is non-null; allow_null=False must catch effective nullability
+    c_null = ConsumerContract(
+        consumer_id="strict-nested-null",
+        consumer_name="Strict Nested Non-Null Reader",
+        strict_nullability=True,
+        fields=[
+            ConsumerFieldRequirement(
+                name="envelope.id",
+                permitted_types=["int64"],
+                allow_null=False,
+            )
+        ],
+    )
+    ev_null = evaluate_single_consumer(schema, c_null)
+    assert ev_null.status == ConsumerCompatibilityStatus.INCOMPATIBLE
+    assert "envelope.id" in ev_null.nullability_violations
+
+    # 2. Unescaped 'metric.v1' must NOT silently match top-level literal 'metric.v1'
+    c_unescaped = ConsumerContract(
+        consumer_id="unescaped-dot",
+        consumer_name="Unescaped Dot Reader",
+        fields=[ConsumerFieldRequirement(name="metric.v1", permitted_types=["float64"])],
+    )
+    ev_unescaped = evaluate_single_consumer(schema, c_unescaped)
+    assert ev_unescaped.status == ConsumerCompatibilityStatus.INCOMPATIBLE
+    assert "metric.v1" in ev_unescaped.missing_required_fields
+    assert r"metric\.v1" in (ev_unescaped.field_evaluations[0].violation_reason or "")

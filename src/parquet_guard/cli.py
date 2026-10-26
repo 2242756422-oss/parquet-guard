@@ -727,7 +727,6 @@ def impact_cmd(target_path: str, consumers_path: str, fmt: str, out_file: Option
     """Analyze upstream Parquet schema drift against declared downstream consumer contracts."""
     try:
         from parquet_guard.core.consumer import (
-            ConsumerCompatibilityStatus,
             ConsumerContract,
             ConsumerGroupSpecification,
             evaluate_consumer_impact,
@@ -787,7 +786,7 @@ def impact_cmd(target_path: str, consumers_path: str, fmt: str, out_file: Option
         else:
             click.echo(out_str)
 
-        if report.overall_status == ConsumerCompatibilityStatus.INCOMPATIBLE:
+        if report.is_blocking:
             sys.exit(1)
         sys.exit(0)
 

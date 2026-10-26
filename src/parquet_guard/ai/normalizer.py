@@ -154,16 +154,13 @@ def normalize_consumer_impact_report(
         for fe in ev.field_evaluations:
             if fe.status in (
                 ConsumerCompatibilityStatus.INCOMPATIBLE,
+                ConsumerCompatibilityStatus.UNCERTAIN,
                 ConsumerCompatibilityStatus.CONDITIONALLY_COMPATIBLE,
                 ConsumerCompatibilityStatus.POTENTIALLY_BREAKING,
             ):
                 f_id = f"C{idx:03d}"
                 fe.linked_finding_id = f_id
-                severity = (
-                    Severity.BREAKING
-                    if fe.status == ConsumerCompatibilityStatus.INCOMPATIBLE and fe.is_critical
-                    else Severity.WARNING
-                )
+                severity = Severity.BREAKING if fe.is_blocking else Severity.WARNING
 
                 ch_type = ChangeType.TYPE_MISMATCH
                 if fe.requirement and fe.field_name in ev.missing_required_fields:
