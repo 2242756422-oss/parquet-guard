@@ -42,9 +42,9 @@
 
 ## 2. Test & Verification Status
 
-- **Unit/Integration Suite**: 118/118 tests passed (`pytest tests/ -v`).
+- **Unit/Integration Suite**: 162/162 tests passed (`pytest tests/ -q`), including P0-A/P0-B/P0-C/P0-D regressions, real subprocess MCP tests, AI evaluator counterexamples, and PyArrow engine behavior tests.
 - **Linter & Formatting**: 100% clean (`ruff check .`, `ruff format --check .`).
-- **Type Checking**: 100% clean across 48 source files (`mypy`).
+- **Type Checking**: 100% clean across 56 source files (`mypy --explicit-package-bases src tests examples benchmarks`).
 - **Backup Created**: Verified safe external backup at `/Users/liujingye/.gemini/antigravity/brain/f21c6578-0259-4db6-b648-a511600004b7/recovery_backup/`.
 - **Protected Directories**: Untracked `application/`, `community/`, `research/` untouched.
 

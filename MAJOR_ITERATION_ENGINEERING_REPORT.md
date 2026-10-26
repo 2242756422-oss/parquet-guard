@@ -6,7 +6,7 @@
 **Repository**: [github.com/2242756422-oss/parquet-guard](https://github.com/2242756422-oss/parquet-guard)  
 **Baseline Release**: `v0.3.0a1` (PyPI released, Commit `f854564`)  
 **Development Branch**: `feat/consumer-aware-schema-intelligence`  
-**Quality Status**: 100% Passing (139 automated tests, Ruff clean, Mypy strict across 56 source files)  
+**Quality Status**: 100% Passing (162 automated tests, Ruff clean, Mypy strict across 56 source files)  
 
 ---
 
@@ -251,17 +251,22 @@ Three complete, standalone, runnable demonstrations were delivered in `examples/
 
 All benchmarks were recorded on macOS Darwin (Python 3.13.9, PyArrow 21.0.0) and serialized to `benchmarks/consumer_intelligence_benchmarks.json`:
 
-| Benchmark Phase | Target / Workload | Mean Latency | Median Latency | Throughput / Efficiency |
+| Benchmark Phase | Target / Workload | Mean Latency | Median Latency | Throughput / Notes |
 | :--- | :--- | :---: | :---: | :--- |
-| **Topology Grouping** | 100 lake partition files | **0.22 ms** | 0.20 ms | 0.002 ms / partition |
-| **Consumer Impact** | 1 downstream consumer | **0.016 ms** | 0.013 ms | 0.016 ms / consumer |
-| **Consumer Impact** | 5 downstream consumers | **0.043 ms** | 0.042 ms | 0.0086 ms / consumer |
-| **Consumer Impact** | 10 downstream consumers | **0.112 ms** | 0.081 ms | 0.0112 ms / consumer |
-| **Consumer Impact** | 20 downstream consumers | **0.158 ms** | 0.154 ms | 0.0079 ms / consumer |
-| **Migration Sandbox** | 100 synthetic rows | **16.63 ms** | 16.50 ms | 6,014 rows / sec |
-| **Migration Sandbox** | 500 synthetic rows | **1.31 ms** | 1.25 ms | 382,555 rows / sec |
-| **Migration Sandbox** | 1,000 synthetic rows | **1.59 ms** | 1.55 ms | 628,536 rows / sec |
-| **HTML Report Gen** | Standalone dashboard (26KB) | **0.11 ms** | 0.10 ms | Instantaneous |
+| **Dataset Discovery** | 100 partition directories (`rglob`) | **2.74 ms** | 2.75 ms | File path discovery only |
+| **Parquet Footer Inspection** | 100 partition files (`inspect_parquet_schema`) | **5.13 ms** | 5.10 ms | 0.051 ms / file (zero data scan) |
+| **Schema Fingerprinting** | 100 schemas (`compute_schema_fingerprint`) | **0.37 ms** | 0.37 ms | Canonical SHA-256 hashing |
+| **In-Memory Topology Grouping** | `analyze_dataset_topology()` on pre-audited result | **0.19 ms** | 0.19 ms | Pure in-memory clustering |
+| **Full Audit + Grouping** | `audit_dataset()` + `analyze_dataset_topology()` (100 files) | **14.53 ms** | 14.37 ms | Cold first run: 16.58 ms |
+| **Consumer Impact** | 1 downstream consumer | **0.040 ms** | 0.039 ms | 0.040 ms / consumer |
+| **Consumer Impact** | 5 downstream consumers | **0.164 ms** | 0.164 ms | 0.0328 ms / consumer |
+| **Consumer Impact** | 10 downstream consumers | **0.308 ms** | 0.306 ms | 0.0308 ms / consumer |
+| **Consumer Impact** | 20 downstream consumers | **0.651 ms** | 0.624 ms | 0.0326 ms / consumer |
+| **Migration Sandbox (Warm)** | 100 synthetic rows (after warmup; cold=2.12 ms) | **1.30 ms** | 1.31 ms | 76,982 rows / sec |
+| **Migration Sandbox (Warm)** | 500 synthetic rows | **1.45 ms** | 1.47 ms | 345,304 rows / sec |
+| **Migration Sandbox (Warm)** | 1,000 synthetic rows | **1.69 ms** | 1.65 ms | 591,017 rows / sec |
+| **HTML Report Gen** | Standalone dashboard (27.9 KB) | **0.11 ms** | 0.11 ms | Offline SVG + tables |
+| **Complete End-to-End** | Audit + Topology + 20 Consumers + Sandbox + HTML | **20.95 ms** | 20.72 ms | Full pipeline execution |
 
 ---
 
@@ -295,7 +300,7 @@ The test suite was systematically expanded with 5 new test modules:
 - `tests/test_mcp_server.py`: JSON-RPC protocol compliance, tool invocation, and path sandboxing defense.
 - `tests/test_cli.py`: End-to-end Click runner verification for all new CLI commands.
 
-**Test Results**: **139 passed** in 8.03 seconds. Zero failures, zero warnings.
+**Test Results**: **162 passed** in < 8 seconds. Zero failures, zero warnings.
 
 ---
 
@@ -347,8 +352,8 @@ src/parquet_guard/
 
 This major autonomous engineering iteration elevates Parquet Guard into an indispensable, production-grade intelligence layer for data engineers, analytics teams, and AI practitioners.
 
-All 10 master execution directives have been comprehensively delivered, empirically verified, documented, and packaged:
-- 139 automated tests passing (100%).
+All 10 master execution directives and P0/P1 engineering hardening checks have been comprehensively delivered, empirically verified, documented, and packaged:
+- 162 automated tests passing (100%).
 - Strict type compliance and zero linter warnings.
 - Real runnable demonstrations and empirical benchmarks.
 - Clean git history on `feat/consumer-aware-schema-intelligence`.
