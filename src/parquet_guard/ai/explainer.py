@@ -247,12 +247,28 @@ def diagnose_schema_drift(
         # Construct and validate Pydantic model
         diagnosis = DriftDiagnosisReport.model_validate(raw_dict)
 
+        # Capture raw pre-sanitization model audit telemetry for evaluator fidelity grading
+        raw_verdict_ok = (
+            diagnosis.deterministic_verdict == evidence.deterministic_verdict
+            and diagnosis.is_blocking_ci == evidence.is_breaking
+        )
+        valid_ids = get_valid_finding_ids(evidence)
+        raw_cited = list(diagnosis.all_cited_finding_ids)
+        for c in diagnosis.confirmed_changes:
+            if c.finding_id not in raw_cited:
+                raw_cited.append(c.finding_id)
+        for cq in diagnosis.potential_consequences:
+            for fid in cq.linked_finding_ids:
+                if fid not in raw_cited:
+                    raw_cited.append(fid)
+        raw_invalid = [fid for fid in raw_cited if fid not in valid_ids]
+        raw_suspicious = diagnosis.suspicious_input_detected
+
         # INVARIANT 1: Force deterministic verdict preservation (LLM cannot override CI verdict!)
         diagnosis.deterministic_verdict = evidence.deterministic_verdict
         diagnosis.is_blocking_ci = evidence.is_breaking
 
         # INVARIANT 2: Validate cited finding IDs against real evidence
-        valid_ids = get_valid_finding_ids(evidence)
         sanitized_cited = [fid for fid in diagnosis.all_cited_finding_ids if fid in valid_ids]
         diagnosis.all_cited_finding_ids = sanitized_cited or list(valid_ids)
 
@@ -267,6 +283,10 @@ def diagnose_schema_drift(
             tokens_completion=response.tokens_completion,
             latency_ms=response.latency_ms,
             fallback_used=False,
+            raw_verdict_preserved=raw_verdict_ok,
+            raw_cited_finding_ids=raw_cited,
+            raw_invalid_citations=raw_invalid,
+            raw_suspicious_input_detected=raw_suspicious,
         )
         return diagnosis
 
@@ -334,9 +354,9 @@ def format_diagnosis_terminal(diagnosis: DriftDiagnosisReport) -> str:
 
     if diagnosis.potential_consequences:
         console.print("\n[bold yellow]⚡ Potential Downstream Consequences:[/bold yellow]")
-        for c in diagnosis.potential_consequences:
-            engines = ", ".join(c.affected_engines) if c.affected_engines else "All Readers"
-            console.print(f"  • [[bold cyan]{c.category.value}[/bold cyan]] ({engines}): {c.description}")
+        for cq in diagnosis.potential_consequences:
+            engines = ", ".join(cq.affected_engines) if cq.affected_engines else "All Readers"
+            console.print(f"  • [[bold cyan]{cq.category.value}[/bold cyan]] ({engines}): {cq.description}")
 
     if diagnosis.candidate_remediations:
         console.print("\n[bold green]🛠️ Candidate Remediation Strategies:[/bold green]")

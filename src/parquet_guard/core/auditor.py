@@ -732,3 +732,7 @@ def audit_dataset(
         cache_misses=cache_misses,
         incremental=incremental,
     )
+
+
+# Public alias for audit_dataset
+audit_dataset_consistency = audit_dataset

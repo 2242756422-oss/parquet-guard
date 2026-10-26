@@ -77,6 +77,9 @@ class NormalizedEvidence(BaseModel):
     metadata_changes: List[str] = Field(
         default_factory=list, description="Top-level schema metadata changes detected"
     )
+    consumer_impacts: List[Dict[str, Any]] = Field(
+        default_factory=list, description="Downstream consumer impact summaries"
+    )
     user_context: Optional[str] = Field(
         default=None, description="Optional developer-supplied pipeline context"
     )
@@ -102,6 +105,9 @@ class PotentialConsequence(BaseModel):
     category: FindingImpactCategory = Field(description="Category of operational risk")
     affected_engines: List[str] = Field(
         default_factory=list, description="Engines impacted (e.g. ['DuckDB', 'PyArrow', 'Spark', 'ML'])"
+    )
+    affected_consumer_ids: List[str] = Field(
+        default_factory=list, description="Consumer IDs impacted (e.g. ['duckdb-analytics', 'polars-etl'])"
     )
     description: str = Field(description="Detailed explanation of the risk mechanism")
     linked_finding_ids: List[str] = Field(
@@ -135,6 +141,22 @@ class ProviderMetadata(BaseModel):
     tokens_completion: Optional[int] = Field(default=None, description="Completion tokens used")
     latency_ms: float = Field(default=0.0, description="Inference latency in milliseconds")
     fallback_used: bool = Field(default=False, description="True if deterministic fallback was triggered")
+    raw_verdict_preserved: bool = Field(
+        default=True,
+        description="True if raw model output matched deterministic_verdict before post-hoc enforcement",
+    )
+    raw_cited_finding_ids: List[str] = Field(
+        default_factory=list,
+        description="Unfiltered finding IDs cited by raw model output before sanitization",
+    )
+    raw_invalid_citations: List[str] = Field(
+        default_factory=list,
+        description="Nonexistent finding IDs cited by raw model output before sanitization",
+    )
+    raw_suspicious_input_detected: bool = Field(
+        default=False,
+        description="Whether raw model output itself set suspicious_input_detected",
+    )
 
 
 class DriftDiagnosisReport(BaseModel):
@@ -247,6 +269,12 @@ class ScenarioCategory(str, Enum):
     PROMPT_INJECTION_DEFENSE = "PROMPT_INJECTION_DEFENSE"
     AMBIGUOUS_BUSINESS_SEMANTICS = "AMBIGUOUS_BUSINESS_SEMANTICS"
     MULTIPLE_SIMULTANEOUS_CHANGES = "MULTIPLE_SIMULTANEOUS_CHANGES"
+    CONSUMER_REQUIREMENT_VIOLATION = "CONSUMER_REQUIREMENT_VIOLATION"
+    CONSUMER_EXTRA_FIELDS_VIOLATION = "CONSUMER_EXTRA_FIELDS_VIOLATION"
+    MIGRATION_PRECISION_REJECTION = "MIGRATION_PRECISION_REJECTION"
+    MIGRATION_TEMPORAL_REJECTION = "MIGRATION_TEMPORAL_REJECTION"
+    MIGRATION_LEGACY_CONSUMER_BREAKAGE = "MIGRATION_LEGACY_CONSUMER_BREAKAGE"
+    PRIVACY_METADATA_MINIMIZATION = "PRIVACY_METADATA_MINIMIZATION"
 
 
 class EvaluationScenario(BaseModel):
@@ -270,6 +298,7 @@ class EvaluationScenario(BaseModel):
     adversarial_payload: Optional[str] = Field(
         default=None, description="Malicious injection payload placed inside field name or metadata"
     )
+    split: str = Field(default="dev", description="'dev' or 'held_out'")
 
 
 class ScenarioEvaluationScore(BaseModel):
@@ -316,5 +345,11 @@ class EvaluationSuiteReport(BaseModel):
     mean_evidence_validity: float = Field(description="Average evidence reference validity")
     factual_consistency_rate: float = Field(description="Fraction of verdicts correctly preserved")
     injection_defense_rate: float = Field(description="Fraction of adversarial scenarios resisted")
+    fallback_count: int = Field(
+        default=0, description="Number of scenarios where provider failed and deterministic fallback ran"
+    )
+    fallback_rate: float = Field(
+        default=0.0, description="Fraction of scenarios that used deterministic fallback"
+    )
     average_latency_ms: float = Field(description="Mean latency per scenario")
     scenario_scores: List[ScenarioEvaluationScore] = Field(default_factory=list)

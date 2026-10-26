@@ -95,3 +95,89 @@ def test_cli_audit(partitioned_dataset: Path, divergent_dataset: Path) -> None:
     audit_drift = runner.invoke(main, ["audit", str(divergent_dataset)])
     assert audit_drift.exit_code == 1
     assert "[FAIL] Schema drift detected" in audit_drift.output
+
+
+def test_cli_init_consumer_and_impact(
+    sample_parquet_file: Path, breaking_parquet_file: Path, temp_dir: Path
+) -> None:
+    """Test init-consumer and impact CLI commands."""
+    runner = CliRunner()
+    consumer_file = temp_dir / "consumer.json"
+
+    # 1. init-consumer
+    r_init = runner.invoke(
+        main,
+        [
+            "init-consumer",
+            str(sample_parquet_file),
+            "-o",
+            str(consumer_file),
+            "-id",
+            "test-consumer",
+            "-n",
+            "Test Consumer",
+        ],
+    )
+    assert r_init.exit_code == 0
+    assert consumer_file.is_file()
+
+    # 2. impact against same file (compatible, exit 0)
+    r_impact_pass = runner.invoke(
+        main,
+        ["impact", str(sample_parquet_file), "-c", str(consumer_file), "-f", "json"],
+    )
+    assert r_impact_pass.exit_code == 0
+    import json
+
+    data = json.loads(r_impact_pass.output)
+    assert data["overall_status"] == "COMPATIBLE"
+
+    # 3. impact against breaking file (breaking, exit 1)
+    r_impact_fail = runner.invoke(
+        main,
+        ["impact", str(breaking_parquet_file), "-c", str(consumer_file)],
+    )
+    assert r_impact_fail.exit_code == 1
+    assert "CONSUMER IMPACT ANALYSIS" in r_impact_fail.output
+
+
+def test_cli_verify_migration(sample_parquet_file: Path, temp_dir: Path) -> None:
+    """Test verify-migration CLI command."""
+    runner = CliRunner()
+    from parquet_guard.core.inspector import inspect_schema
+    from parquet_guard.core.migration_verifier import (
+        ExecutableMigrationPlan,
+    )
+
+    schema = inspect_schema(sample_parquet_file)
+    plan = ExecutableMigrationPlan(
+        plan_id="CLI-MIG-01",
+        title="Test CLI Migration",
+        description="Safe cast test",
+        source_contract=schema,
+        target_contract=schema,
+        operations=[],
+    )
+    plan_file = temp_dir / "plan.json"
+    plan_file.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
+
+    res = runner.invoke(main, ["verify-migration", str(plan_file), "-n", "20"])
+    assert res.exit_code == 0
+    assert "MIGRATION SANDBOX VERIFICATION" in res.output
+    assert "PASSED" in res.output
+
+
+def test_cli_report(partitioned_dataset: Path, temp_dir: Path) -> None:
+    """Test report CLI command generating standalone HTML."""
+    runner = CliRunner()
+    report_file = temp_dir / "report.html"
+
+    res = runner.invoke(
+        main,
+        ["report", str(partitioned_dataset), "-o", str(report_file), "--title", "CLI Test Lake"],
+    )
+    assert res.exit_code == 0
+    assert report_file.is_file()
+    content = report_file.read_text(encoding="utf-8")
+    assert "<!DOCTYPE html>" in content
+    assert "CLI Test Lake" in content

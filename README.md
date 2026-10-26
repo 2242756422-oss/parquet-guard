@@ -33,6 +33,11 @@ In modern data engineering and AI training pipelines, Apache Parquet is the ubiq
 ## ✨ Features
 
 - **🚀 Zero-Data-Scan Performance**: Reads metadata footers exclusively. Audits 100+ partitions in `< 20ms` without touching raw data pages.
+- **👥 Consumer-Aware Schema Contracts & Impact Analysis**: Track and evaluate downstream consumer compatibility (`impact`, `init-consumer`). Detect broken vs unaffected consumers across DuckDB, Polars, PyArrow, Trino, and Spark pipelines.
+- **🗺️ Dataset-Wide Topology Grouping**: Cluster partitioned data lakes into structural schema groups (`analyze_dataset_topology`), identify canonical schemas, and quantify divergence concentration across partitions.
+- **🧪 Verified Synthetic Migration Sandbox**: Test proposed schema migrations (`verify-migration`) in an isolated temporary PyArrow sandbox with synthetic edge-case data, validating value invariants, row preservation, and precision truncation prevention.
+- **📊 Standalone Interactive HTML Reports**: Generate zero-dependency, self-contained single-file HTML reports (`report`) featuring SVG consumer impact DAGs, schema group topology tables, and sandbox outcome matrices.
+- **🔌 Model Context Protocol (MCP) Server**: Expose 7 schema inspection, contract validation, and impact analysis tools over stdio JSON-RPC 2.0 (`serve-mcp`) for AI pair programmers and Cursor/Claude environments with path sandboxing.
 - **⚡ Experimental Incremental Dataset Auditing**: Caches partition schema fingerprints with atomic mtime/size validation (`--incremental`). Bypasses redundant footer reads while ensuring 100% agreement with cold audits.
 - **📐 Deep Structural Type Equality**: Enforces exact structural validation across Arrow types:
   - FixedSizeList length verification (`list_size`).
@@ -43,6 +48,7 @@ In modern data engineering and AI training pipelines, Apache Parquet is the ubiq
   - Deep nested Struct and List child fields with ordering and metadata retention.
 - **🔒 Golden Schema Contracts**: Export, enforce, and strictly validate declarative `.parquet-guard.json` contracts (`validate-contract`, `check`).
 - **🤖 Evidence-Grounded AI Schema Evolution Copilot**: Optional AI diagnostic and planning subsystem (`explain`, `propose-migration`, `eval-ai`). Cites deterministic finding IDs (`F001`, `F002`), evaluates DuckDB/PyArrow/Spark operational consequences, and generates deterministically validated migration plans with zero raw data leaks and zero CI verdict override authority.
+- **🧪 64-Scenario AI Evaluation Framework**: Reproducible 64-scenario evaluation suite (`eval-ai --split [all|dev|held_out]`) verifying citation validity, factual consistency, and prompt-injection resistance across 40 development and 24 held-out scenarios.
 - **🛡️ SARIF 2.1.0 Native Integration**: Emits OASIS SARIF 2.1.0 reports (`--format sarif`), integrating directly into GitHub Code Scanning and security alerts.
 - **🗂️ Deterministic Partition Drift Auditor**: Recursively scans partitioned trees or globs to ensure 100% schema consistency across partitioned datasets with permutation invariance.
 - **💬 GitHub PR Automation**: Generates clean Markdown reports with status badges and collapsible diff tables, perfect for automated PR comments.
@@ -136,19 +142,64 @@ parquet-guard explain data/new_batch.parquet -c contracts/events.schema.json --f
 parquet-guard explain data/new_batch.parquet -c contracts/events.schema.json --provider openai --model gpt-4o-mini
 ```
 
-### 7. Contract Evolution & Migration Planning (`propose-migration`)
+### 7. Consumer Impact Analysis (`impact` & `init-consumer`)
+Initialize and evaluate downstream consumer compatibility contracts:
+```bash
+# Generate consumer contract template
+parquet-guard init-consumer -o contracts/duckdb_consumer.json --consumer-id duckdb-analytics
+
+# Evaluate downstream impact across consumer group specification
+parquet-guard impact data/new_batch.parquet -c contracts/consumers.json
+
+# Export machine-readable consumer impact JSON
+parquet-guard impact data/new_batch.parquet -c contracts/consumers.json --format json -o impact.json
+```
+
+### 8. Synthetic Migration Verification Sandbox (`verify-migration`)
+Validate migration plans against synthetic edge-case data in an isolated filesystem sandbox:
+```bash
+parquet-guard verify-migration data/new_batch.parquet --plan migration_plan.json -c contracts/consumers.json --sample-rows 100
+```
+
+### 9. Standalone Interactive HTML Report (`report`)
+Generate an all-in-one HTML dashboard with SVG impact DAG, topology breakdown, and compatibility matrix:
+```bash
+parquet-guard report "data/lake/**/*.parquet" -c contracts/consumers.json -o diagnostic_report.html
+```
+
+### 10. Model Context Protocol (MCP) Server (`serve-mcp`)
+Launch the official stdio JSON-RPC 2.0 MCP server for AI pair programming:
+```bash
+# Run stdio MCP server for Cursor, Claude Desktop, or Windsurf
+parquet-guard serve-mcp --workdir /path/to/project
+```
+
+### 11. Contract Evolution & Migration Planning (`propose-migration`)
 Generate a proposed contract update and executable PyArrow transformation code:
 ```bash
 parquet-guard propose-migration data/new_batch.parquet -c contracts/events.schema.json --save-contract contracts/events.v2.json
 ```
 
-### 8. Reproducible AI Benchmark Evaluation (`eval-ai`)
-Run the 12-scenario synthetic evaluation benchmark measuring finding identification, citation validity, and prompt-injection defense:
+### 12. Reproducible AI Benchmark Evaluation (`eval-ai`)
+Run the 64-scenario synthetic evaluation benchmark across development or held-out splits:
 ```bash
+# Run full 64-scenario evaluation suite
 parquet-guard eval-ai --provider mock
+
+# Run specific split (dev: 40 scenarios, held_out: 24 scenarios)
+parquet-guard eval-ai --provider mock --split dev
+parquet-guard eval-ai --provider mock --split held_out
 ```
 
-> **Evaluation Classification Note**: The default `--provider mock` suite measures offline test harness integrity, XML prompt parsing, citation-id validation, and fallback logic against deterministic baselines. It does **not** evaluate live frontier model reasoning capabilities (which requires configuring an active remote provider and API key).
+---
+
+## 💡 Practical Pipeline Demonstrations
+
+Explore fully functioning, reproducible scenarios in `examples/`:
+
+1. **[E-Commerce Orders Pipeline](examples/ecommerce_pipeline/)**: Simulates schema evolution (`decimal128(10,2)` to `(14,4)` and temporal precision widening) across 3 distinct consumers (DuckDB, Polars, PyArrow), executing an isolated sandbox migration and generating an HTML report.
+2. **[AI Feature Store Vector Guard](examples/ai_feature_pipeline/)**: Detects and halts vector dimension mismatches (512 vs 768 dimensions in `fixed_size_list<float32>`), preventing vector database ANN index corruption.
+3. **[Partitioned Data Lake Topology](examples/partitioned_lake/)**: Demonstrates clustering 10 lake partitions into 3 distinct schema groups, finding the canonical group, and computing divergence concentration hotspots.
 
 ---
 

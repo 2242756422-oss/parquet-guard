@@ -1,0 +1,197 @@
+{
+  "environment": {
+    "os": "Darwin 27.2.0",
+    "platform": "macOS-27.2-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "processor": "arm",
+    "python_version": "3.13.9",
+    "pyarrow_version": "26.0.0",
+    "warmup_iterations": 2,
+    "measured_repetitions": {
+      "discovery_and_inspection": 10,
+      "topology_grouping": 10,
+      "consumer_scaling": 20,
+      "sandbox_verification": 10,
+      "html_report": 15,
+      "end_to_end": 5
+    }
+  },
+  "stages": {
+    "dataset_discovery_100_files": {
+      "mean": 2.736,
+      "median": 2.693,
+      "min": 2.588,
+      "max": 3.027,
+      "stdev": 0.141
+    },
+    "parquet_metadata_inspection_100_files": {
+      "mean": 5.134,
+      "median": 4.843,
+      "min": 4.748,
+      "max": 6.202,
+      "stdev": 0.51
+    },
+    "schema_fingerprinting_100_schemas": {
+      "mean": 0.371,
+      "median": 0.342,
+      "min": 0.322,
+      "max": 0.547,
+      "stdev": 0.068
+    },
+    "full_dataset_audit_100_files": {
+      "cold_first_run_ms": 14.961,
+      "mean": 14.34,
+      "median": 14.256,
+      "min": 13.945,
+      "max": 15.082,
+      "stdev": 0.348
+    },
+    "in_memory_schema_grouping_100_files": {
+      "mean": 0.194,
+      "median": 0.191,
+      "min": 0.177,
+      "max": 0.239,
+      "stdev": 0.018
+    },
+    "consumer_impact_analysis": {
+      "1": {
+        "mean": 0.04,
+        "median": 0.039,
+        "min": 0.035,
+        "max": 0.054,
+        "stdev": 0.004
+      },
+      "5": {
+        "mean": 0.164,
+        "median": 0.164,
+        "min": 0.155,
+        "max": 0.171,
+        "stdev": 0.004
+      },
+      "10": {
+        "mean": 0.308,
+        "median": 0.306,
+        "min": 0.292,
+        "max": 0.354,
+        "stdev": 0.015
+      },
+      "20": {
+        "mean": 0.651,
+        "median": 0.624,
+        "min": 0.586,
+        "max": 0.904,
+        "stdev": 0.081
+      }
+    },
+    "sandbox_migration_verification": {
+      "100": {
+        "mean": 1.299,
+        "median": 1.308,
+        "min": 1.112,
+        "max": 1.535,
+        "stdev": 0.119,
+        "cold_first_run_ms": 36.974
+      },
+      "500": {
+        "mean": 1.448,
+        "median": 1.469,
+        "min": 1.349,
+        "max": 1.554,
+        "stdev": 0.07
+      },
+      "1000": {
+        "mean": 1.692,
+        "median": 1.645,
+        "min": 1.591,
+        "max": 1.885,
+        "stdev": 0.109
+      }
+    },
+    "html_report_generation": {
+      "mean": 0.112,
+      "median": 0.109,
+      "min": 0.105,
+      "max": 0.136,
+      "stdev": 0.01
+    },
+    "complete_end_to_end_workflow": {
+      "mean": 20.955,
+      "median": 20.722,
+      "min": 20.564,
+      "max": 21.756,
+      "stdev": 0.489
+    }
+  },
+  "topology": {
+    "100_partitions": {
+      "mean": 0.194,
+      "median": 0.191,
+      "min": 0.177,
+      "max": 0.239,
+      "stdev": 0.018,
+      "note": "In-memory grouping on pre-audited PartitionAuditResult; see stages.full_dataset_audit_100_files for full I/O + footer scan latency.",
+      "full_audit_plus_grouping_mean_ms": 14.534
+    }
+  },
+  "consumer_scaling": {
+    "1": {
+      "mean": 0.04,
+      "median": 0.039,
+      "min": 0.035,
+      "max": 0.054,
+      "stdev": 0.004
+    },
+    "5": {
+      "mean": 0.164,
+      "median": 0.164,
+      "min": 0.155,
+      "max": 0.171,
+      "stdev": 0.004
+    },
+    "10": {
+      "mean": 0.308,
+      "median": 0.306,
+      "min": 0.292,
+      "max": 0.354,
+      "stdev": 0.015
+    },
+    "20": {
+      "mean": 0.651,
+      "median": 0.624,
+      "min": 0.586,
+      "max": 0.904,
+      "stdev": 0.081
+    }
+  },
+  "sandbox_verification": {
+    "100": {
+      "mean": 1.299,
+      "median": 1.308,
+      "min": 1.112,
+      "max": 1.535,
+      "stdev": 0.119,
+      "cold_first_run_ms": 36.974
+    },
+    "500": {
+      "mean": 1.448,
+      "median": 1.469,
+      "min": 1.349,
+      "max": 1.554,
+      "stdev": 0.07
+    },
+    "1000": {
+      "mean": 1.692,
+      "median": 1.645,
+      "min": 1.591,
+      "max": 1.885,
+      "stdev": 0.109
+    }
+  },
+  "html_report": {
+    "mean": 0.112,
+    "median": 0.109,
+    "min": 0.105,
+    "max": 0.136,
+    "stdev": 0.01
+  }
+}
