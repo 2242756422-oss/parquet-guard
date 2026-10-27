@@ -48,8 +48,10 @@ def sample_parquet(tmp_path: Path) -> Path:
 def test_list_available_engines() -> None:
     engines = list_available_engines()
     assert "pyarrow" in engines
-    assert "duckdb" in engines
-    assert "polars" in engines
+    if DuckDBEngineAdapter().is_available():
+        assert "duckdb" in engines
+    if PolarsEngineAdapter().is_available():
+        assert "polars" in engines
 
 
 def test_quote_sql_identifier_sanitization() -> None:
@@ -80,6 +82,7 @@ def test_pyarrow_engine_read_and_cast(sample_parquet: Path) -> None:
     assert res_cast.runtime_verdict == RuntimeVerdict.PASS
 
 
+@pytest.mark.skipif(not DuckDBEngineAdapter().is_available(), reason="DuckDB not installed")
 def test_duckdb_engine_read_and_union(sample_parquet: Path, tmp_path: Path) -> None:
     adapter = DuckDBEngineAdapter()
     assert adapter.is_available()
@@ -106,6 +109,7 @@ def test_duckdb_engine_read_and_union(sample_parquet: Path, tmp_path: Path) -> N
     assert res_union.details.get("files_unified") == 2
 
 
+@pytest.mark.skipif(not PolarsEngineAdapter().is_available(), reason="Polars not installed")
 def test_polars_engine_read_and_cast(sample_parquet: Path) -> None:
     adapter = PolarsEngineAdapter()
     assert adapter.is_available()

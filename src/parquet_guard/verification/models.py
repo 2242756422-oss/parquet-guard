@@ -110,6 +110,7 @@ class EngineVerificationReport(BaseModel):
         """Return True if both metadata is non-breaking and all executed runtime probes passed."""
         meta_ok = self.metadata_verdict in (MetadataVerdict.COMPATIBLE, MetadataVerdict.WARNING)
         runtime_ok = all(
-            r.runtime_verdict in (RuntimeVerdict.PASS, RuntimeVerdict.NOT_RUN) for r in self.engine_results
+            r.runtime_verdict in (RuntimeVerdict.PASS, RuntimeVerdict.NOT_RUN, RuntimeVerdict.UNSUPPORTED)
+            for r in self.engine_results
         )
         return meta_ok and runtime_ok and not self.has_rule_optimistic_disagreement
