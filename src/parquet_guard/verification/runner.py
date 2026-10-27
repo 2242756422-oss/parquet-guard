@@ -308,7 +308,7 @@ def format_engine_verification_terminal(report: EngineVerificationReport) -> str
 
 def format_engine_verification_json(report: EngineVerificationReport) -> str:
     """Serialize an EngineVerificationReport to JSON."""
-    return report.model_dump_json(indent=2)
+    return str(report.model_dump_json(indent=2))
 
 
 def format_engine_verification_markdown(report: EngineVerificationReport) -> str:

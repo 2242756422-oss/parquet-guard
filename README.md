@@ -215,12 +215,13 @@ Assert schema and engine compatibility directly within your Python test suites:
 ```python
 from parquet_guard.testing import assert_engine_verified, assert_schema_compatible
 
+
 def test_pipeline_output(tmp_path):
     output_parquet = run_my_pipeline(tmp_path)
-    
+
     # Assert structural compatibility against golden contract
     assert_schema_compatible(output_parquet, "contracts/golden.json", mode="permissive")
-    
+
     # Probe real query engines for runtime compatibility
     assert_engine_verified(output_parquet, engines=["duckdb", "polars"])
 ```
