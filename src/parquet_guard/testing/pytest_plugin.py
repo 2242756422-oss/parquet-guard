@@ -91,12 +91,19 @@ def assert_engine_verified(
         row_limit=row_limit,
     )
 
-    if report.runtime_verdict == RuntimeVerdict.FAIL:
-        failures = [
-            f"  - [{r.engine_name}] {r.operation.value}: {r.error_message}"
-            for r in report.engine_results
-            if r.runtime_verdict == RuntimeVerdict.FAIL
-        ]
+    if not report.overall_compatible:
+        failures = []
+        for r in report.engine_results:
+            if r.runtime_verdict in (RuntimeVerdict.FAIL, RuntimeVerdict.ERROR):
+                failures.append(
+                    f"  - [{r.engine_name}] {r.operation.value}: {r.error_message or r.runtime_verdict.value}"
+                )
+            elif r.runtime_verdict == RuntimeVerdict.UNSUPPORTED:
+                failures.append(f"  - [{r.engine_name}] {r.operation.value}: engine unsupported")
+        if not failures:
+            failures.append(
+                f"  - Verification inconclusive or unexecuted (runtime_verdict: {report.runtime_verdict.value}, metadata_verdict: {report.metadata_verdict.value})"
+            )
         raise AssertionError("Runtime query engine verification failed:\n" + "\n".join(failures))
 
     if fail_on_disagreement and report.has_rule_optimistic_disagreement:

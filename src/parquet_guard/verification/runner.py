@@ -69,7 +69,15 @@ def classify_disagreement(
     runtime_verdict: RuntimeVerdict,
 ) -> DisagreementClassification:
     """Classify the relationship between static metadata prediction and runtime reality."""
-    if runtime_verdict in (RuntimeVerdict.UNSUPPORTED, RuntimeVerdict.NOT_RUN, RuntimeVerdict.INCONCLUSIVE):
+    if runtime_verdict in (
+        RuntimeVerdict.UNSUPPORTED,
+        RuntimeVerdict.NOT_RUN,
+        RuntimeVerdict.INCONCLUSIVE,
+        RuntimeVerdict.ERROR,
+    ):
+        return DisagreementClassification.INCONCLUSIVE
+
+    if meta_verdict in (MetadataVerdict.ERROR, MetadataVerdict.UNKNOWN):
         return DisagreementClassification.INCONCLUSIVE
 
     is_meta_safe = meta_verdict in (MetadataVerdict.COMPATIBLE, MetadataVerdict.WARNING)
@@ -184,17 +192,28 @@ def verify_engine_compatibility(
 
     # 2. Select target engines
     selected_engines = engines or ["pyarrow", "duckdb", "polars"]
-    probed_operations = operations or [
-        EngineProbeOperation.READ,
-        EngineProbeOperation.SCHEMA_UNION if len(resolved_files) > 1 else EngineProbeOperation.CAST,
-    ]
+    probed_operations = (
+        operations
+        if operations is not None
+        else [
+            EngineProbeOperation.READ,
+            EngineProbeOperation.SCHEMA_UNION if len(resolved_files) > 1 else EngineProbeOperation.CAST,
+        ]
+    )
+
+    report.requested_engines = list(selected_engines)
+    report.requested_operations = list(probed_operations)
 
     all_runtime_verdicts = []
+    executed_engines: List[str] = []
+    skipped_engines: List[str] = []
+    executed_ops: List[EngineProbeOperation] = []
 
     # 3. Execute Engine Probes
     for eng_name in selected_engines:
         adapter = get_engine_adapter(eng_name)
         if adapter is None or not adapter.is_available():
+            skipped_engines.append(eng_name)
             res = (
                 adapter.make_unsupported_result(EngineProbeOperation.READ)
                 if adapter
@@ -209,12 +228,16 @@ def verify_engine_compatibility(
             all_runtime_verdicts.append(res.runtime_verdict)
             continue
 
+        executed_engines.append(eng_name)
+
         # Execute READ probe
         if EngineProbeOperation.READ in probed_operations:
             read_res = adapter.probe_read(resolved_files, expected_columns=expected_cols, row_limit=row_limit)
             report.engine_results.append(read_res)
             all_runtime_verdicts.append(read_res.runtime_verdict)
             report.tested_invariants.extend(read_res.tested_invariants)
+            if EngineProbeOperation.READ not in executed_ops:
+                executed_ops.append(EngineProbeOperation.READ)
 
             # Check Disagreement for Read
             diag = classify_disagreement(report.metadata_verdict, read_res.runtime_verdict)
@@ -231,6 +254,7 @@ def verify_engine_compatibility(
                 report.disagreements.append(
                     RuleVsRuntimeDisagreement(
                         engine_name=eng_name,
+                        operation=EngineProbeOperation.READ,
                         rule_predicted_verdict=report.metadata_verdict,
                         runtime_verdict=read_res.runtime_verdict,
                         classification=diag,
@@ -249,6 +273,25 @@ def verify_engine_compatibility(
             report.engine_results.append(union_res)
             all_runtime_verdicts.append(union_res.runtime_verdict)
             report.tested_invariants.extend(union_res.tested_invariants)
+            if EngineProbeOperation.SCHEMA_UNION not in executed_ops:
+                executed_ops.append(EngineProbeOperation.SCHEMA_UNION)
+
+            diag_union = classify_disagreement(report.metadata_verdict, union_res.runtime_verdict)
+            if (
+                diag_union != DisagreementClassification.AGREEMENT
+                and diag_union != DisagreementClassification.INCONCLUSIVE
+            ):
+                report.disagreements.append(
+                    RuleVsRuntimeDisagreement(
+                        engine_name=eng_name,
+                        operation=EngineProbeOperation.SCHEMA_UNION,
+                        rule_predicted_verdict=report.metadata_verdict,
+                        runtime_verdict=union_res.runtime_verdict,
+                        classification=diag_union,
+                        explanation=f"Engine {eng_name} yielded {union_res.runtime_verdict.value} for SCHEMA_UNION while static rules predicted {report.metadata_verdict.value}.",
+                        remediation_advice="Reconcile multi-partition schema divergence across partition files.",
+                    )
+                )
 
         # Execute CAST probe if target types specified
         if EngineProbeOperation.CAST in probed_operations and target_field_types:
@@ -256,13 +299,43 @@ def verify_engine_compatibility(
             report.engine_results.append(cast_res)
             all_runtime_verdicts.append(cast_res.runtime_verdict)
             report.tested_invariants.extend(cast_res.tested_invariants)
+            if EngineProbeOperation.CAST not in executed_ops:
+                executed_ops.append(EngineProbeOperation.CAST)
+
+            diag_cast = classify_disagreement(report.metadata_verdict, cast_res.runtime_verdict)
+            if (
+                diag_cast != DisagreementClassification.AGREEMENT
+                and diag_cast != DisagreementClassification.INCONCLUSIVE
+            ):
+                report.disagreements.append(
+                    RuleVsRuntimeDisagreement(
+                        engine_name=eng_name,
+                        operation=EngineProbeOperation.CAST,
+                        rule_predicted_verdict=report.metadata_verdict,
+                        runtime_verdict=cast_res.runtime_verdict,
+                        classification=diag_cast,
+                        explanation=f"Engine {eng_name} yielded {cast_res.runtime_verdict.value} for CAST while static rules predicted {report.metadata_verdict.value}.",
+                        remediation_advice="Review type casting constraints or nullability in target schema.",
+                    )
+                )
+
+    report.executed_engines = executed_engines
+    report.skipped_engines = skipped_engines
+    report.executed_operations = executed_ops
 
     # 4. Synthesize Aggregate Runtime Verdict
-    if any(v == RuntimeVerdict.FAIL for v in all_runtime_verdicts):
+    executed_verdicts = [
+        v for v in all_runtime_verdicts if v not in (RuntimeVerdict.UNSUPPORTED, RuntimeVerdict.NOT_RUN)
+    ]
+    if not all_runtime_verdicts or not probed_operations:
+        report.runtime_verdict = RuntimeVerdict.NOT_RUN
+    elif any(v == RuntimeVerdict.FAIL for v in all_runtime_verdicts):
         report.runtime_verdict = RuntimeVerdict.FAIL
     elif any(v == RuntimeVerdict.ERROR for v in all_runtime_verdicts):
         report.runtime_verdict = RuntimeVerdict.ERROR
-    elif all(v == RuntimeVerdict.PASS for v in all_runtime_verdicts if v != RuntimeVerdict.UNSUPPORTED):
+    elif all(v == RuntimeVerdict.UNSUPPORTED for v in all_runtime_verdicts):
+        report.runtime_verdict = RuntimeVerdict.UNSUPPORTED
+    elif executed_verdicts and all(v == RuntimeVerdict.PASS for v in executed_verdicts):
         report.runtime_verdict = RuntimeVerdict.PASS
     else:
         report.runtime_verdict = RuntimeVerdict.INCONCLUSIVE

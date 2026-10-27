@@ -75,6 +75,7 @@ class RuleVsRuntimeDisagreement(BaseModel):
     """A structured discrepancy where static rules and runtime execution diverged."""
 
     engine_name: str
+    operation: Optional[EngineProbeOperation] = None
     field_name: Optional[str] = None
     rule_predicted_verdict: MetadataVerdict
     runtime_verdict: RuntimeVerdict
@@ -91,12 +92,17 @@ class EngineVerificationReport(BaseModel):
     validation_scope: ValidationScope = ValidationScope.SYNTHETIC_DATA
     timestamp_utc: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     metadata_verdict: MetadataVerdict = MetadataVerdict.COMPATIBLE
-    runtime_verdict: RuntimeVerdict = RuntimeVerdict.PASS
+    runtime_verdict: RuntimeVerdict = RuntimeVerdict.INCONCLUSIVE
     engine_results: List[EngineProbeResult] = Field(default_factory=list)
     disagreements: List[RuleVsRuntimeDisagreement] = Field(default_factory=list)
     finding_ids: List[str] = Field(default_factory=list)
     tested_invariants: List[str] = Field(default_factory=list)
     limitations: List[str] = Field(default_factory=list)
+    requested_engines: List[str] = Field(default_factory=list)
+    executed_engines: List[str] = Field(default_factory=list)
+    skipped_engines: List[str] = Field(default_factory=list)
+    requested_operations: List[EngineProbeOperation] = Field(default_factory=list)
+    executed_operations: List[EngineProbeOperation] = Field(default_factory=list)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -107,10 +113,22 @@ class EngineVerificationReport(BaseModel):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def overall_compatible(self) -> bool:
-        """Return True if both metadata is non-breaking and all executed runtime probes passed."""
+        """Return True only if metadata is safe AND at least one probe actually passed, with zero failures."""
         meta_ok = self.metadata_verdict in (MetadataVerdict.COMPATIBLE, MetadataVerdict.WARNING)
-        runtime_ok = all(
-            r.runtime_verdict in (RuntimeVerdict.PASS, RuntimeVerdict.NOT_RUN, RuntimeVerdict.UNSUPPORTED)
-            for r in self.engine_results
+        if not meta_ok:
+            return False
+        if not self.engine_results:
+            return False
+        # Must have at least one probe that actually passed
+        has_pass = any(r.runtime_verdict == RuntimeVerdict.PASS for r in self.engine_results)
+        if not has_pass:
+            return False
+        # Must have no failures or errors
+        has_failure = any(
+            r.runtime_verdict in (RuntimeVerdict.FAIL, RuntimeVerdict.ERROR) for r in self.engine_results
         )
-        return meta_ok and runtime_ok and not self.has_rule_optimistic_disagreement
+        if has_failure:
+            return False
+        if self.runtime_verdict != RuntimeVerdict.PASS:
+            return False
+        return not self.has_rule_optimistic_disagreement

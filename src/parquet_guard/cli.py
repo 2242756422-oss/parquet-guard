@@ -1154,7 +1154,6 @@ def verify_engine_cmd(
             format_engine_verification_terminal,
             verify_engine_compatibility,
         )
-        from parquet_guard.verification.models import MetadataVerdict, RuntimeVerdict
 
         contract_obj = None
         if contract_path:
@@ -1191,15 +1190,12 @@ def verify_engine_cmd(
         else:
             click.echo(output_str)
 
-        # Exit code determination:
-        # Exit 1 if runtime failed or metadata incompatible
-        if (
-            report.runtime_verdict == RuntimeVerdict.FAIL
-            or report.metadata_verdict == MetadataVerdict.INCOMPATIBLE
-        ):
+        # Exit code determination according to contract:
+        # Exit 0 ONLY if overall_compatible is True (metadata safe AND executed runtime probes passed).
+        # Exit 1 if overall_compatible is False (metadata incompatible, runtime failed, errored, inconclusive, or unsupported).
+        if not report.overall_compatible:
             sys.exit(1)
 
-        # Exit 1 if fail_on_disagreement is requested and rule-optimistic disagreement was detected
         if fail_on_disagreement and report.has_rule_optimistic_disagreement:
             sys.exit(1)
 
