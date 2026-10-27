@@ -97,28 +97,51 @@ def save_audit_cache(cache: DatasetAuditCache, cache_path: Union[str, Path]) -> 
         raise
 
 
-def compute_footer_checksum(file_path: Union[str, Path], chunk_size: int = 16384) -> Optional[str]:
-    """Compute a fast SHA-256 checksum of the Parquet footer region.
+PARQUET_MAGIC = b"PAR1"
+MAX_PARQUET_FOOTER_BYTES = 64 * 1024 * 1024  # 64 MB maximum footer bound
 
-    Reads up to chunk_size (default 16KB) from the tail of the file where the Parquet
-    metadata footer and magic bytes reside. O(1) disk I/O, independent of row count.
+
+def compute_footer_checksum(
+    file_path: Union[str, Path],
+    max_footer_bytes: int = MAX_PARQUET_FOOTER_BYTES,
+    chunk_size: Optional[int] = None,
+) -> Optional[str]:
+    """Compute cryptographic SHA-256 checksum of the complete Parquet FileMetaData footer.
+
+    Dynamically parses the Parquet trailer:
+    - Verifies tail 4 bytes magic (b"PAR1").
+    - Reads the preceding 4-byte little-endian uint32 footer length.
+    - Performs strict bounds checks (footer_len > 0, <= file_size - 8, <= max_footer_bytes).
+    - Reads and hashes the complete FileMetaData bytes (from size - 8 - footer_len to size).
+
+    Fails closed (returns None) if file is not valid Parquet or exceeds bounds. O(1) disk I/O.
     """
     import hashlib
+    import struct
 
     p = Path(file_path)
     if not p.is_file():
         return None
     try:
         size = p.stat().st_size
-        if size == 0:
+        if size < 12:
             return None
         with open(p, "rb") as fh:
-            if size <= chunk_size:
-                data = fh.read()
-            else:
-                fh.seek(size - chunk_size)
-                data = fh.read(chunk_size)
-        return hashlib.sha256(data).hexdigest()
+            fh.seek(size - 8)
+            trailer = fh.read(8)
+            if len(trailer) != 8:
+                return None
+            footer_len = struct.unpack("<I", trailer[:4])[0]
+            magic = trailer[4:]
+            if magic != PARQUET_MAGIC:
+                return None
+            if footer_len == 0 or footer_len > (size - 8) or footer_len > max_footer_bytes:
+                return None
+            fh.seek(size - 8 - footer_len)
+            footer_bytes = fh.read(footer_len + 8)
+            if len(footer_bytes) != (footer_len + 8):
+                return None
+            return hashlib.sha256(footer_bytes).hexdigest()
     except Exception:
         return None
 
@@ -147,7 +170,15 @@ def verify_cached_file_identity(
     if cached.mtime_ns != st.st_mtime_ns:
         return False, "MTIME_CHANGED"
 
-    if require_hash or cached.content_hash is not None:
+    if require_hash:
+        if not cached.content_hash:
+            return False, "MISSING_CACHED_HASH"
+        actual_hash = compute_footer_checksum(p)
+        if actual_hash is None or actual_hash != cached.content_hash:
+            return False, "CHECKSUM_MISMATCH"
+        return True, "MATCH_HIGH_RELIABLE"
+
+    if cached.content_hash is not None:
         actual_hash = compute_footer_checksum(p)
         if actual_hash is None or actual_hash != cached.content_hash:
             return False, "CHECKSUM_MISMATCH"
