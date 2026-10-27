@@ -33,11 +33,14 @@ In modern data engineering and AI training pipelines, Apache Parquet is the ubiq
 ## ✨ Features
 
 - **🚀 Zero-Data-Scan Performance**: Reads metadata footers exclusively. Audits 100+ partitions in `< 20ms` without touching raw data pages.
-- **👥 Consumer-Aware Schema Contracts & Impact Analysis**: Track and evaluate downstream consumer compatibility (`impact`, `init-consumer`). Detect broken vs unaffected consumers across DuckDB, Polars, PyArrow, Trino, and Spark pipelines.
+- **⚡ Empirical Query Engine Verification (`verify-engine`)**: Probe real query engines (**PyArrow**, **DuckDB**, **Polars**) directly on disk. Distinguish static rule predictions from runtime reality (`RULE_OPTIMISTIC` vs `RULE_CONSERVATIVE`) to eliminate multi-partition union traps.
+- **👥 Consumer-Aware Schema Contracts 2.0**: Track and evaluate downstream consumer compatibility (`impact`, `init-consumer`) with declarative directionality (`BACKWARD`, `FORWARD`, `FULL`), independent criticality levels, and explicit field rename mapping.
+- **🔐 Hardened Footer Checksum Cache & Storage Abstraction**: Cryptographic O(1) footer SHA-256 validation (`HIGH_RELIABLE` confidence) with a pluggable storage abstraction layer for local and remote filesystems.
 - **🗺️ Dataset-Wide Topology Grouping**: Cluster partitioned data lakes into structural schema groups (`analyze_dataset_topology`), identify canonical schemas, and quantify divergence concentration across partitions.
-- **🧪 Verified Synthetic Migration Sandbox**: Test proposed schema migrations (`verify-migration`) in an isolated temporary PyArrow sandbox with synthetic edge-case data, validating value invariants, row preservation, and precision truncation prevention.
+- **🧪 Verified Synthetic Migration Sandbox 2.0**: Test proposed schema migrations (`verify-migration`) in an isolated sandbox with boundary-probing synthetic data or authorized user samples (`user_data_authorized=True`).
 - **📊 Standalone Interactive HTML Reports**: Generate zero-dependency, self-contained single-file HTML reports (`report`) featuring SVG consumer impact DAGs, schema group topology tables, and sandbox outcome matrices.
-- **🔌 Model Context Protocol (MCP) Server**: Expose 7 schema inspection, contract validation, and impact analysis tools over stdio JSON-RPC 2.0 (`serve-mcp`) for AI pair programmers and Cursor/Claude environments with path sandboxing.
+- **🔌 Model Context Protocol (MCP) Server**: Expose 8 schema inspection, contract validation, engine verification, and impact analysis tools over stdio JSON-RPC 2.0 (`serve-mcp`) for AI pair programmers and Cursor/Claude environments with path sandboxing.
+- **🧪 Pytest Integration Plugin**: Built-in assertions (`assert_schema_compatible`, `assert_engine_verified`) and `parquet_guard` fixture for Python test suites.
 - **⚡ Experimental Incremental Dataset Auditing**: Caches partition schema fingerprints with atomic mtime/size validation (`--incremental`). Bypasses redundant footer reads while ensuring 100% agreement with cold audits.
 - **📐 Deep Structural Type Equality**: Enforces exact structural validation across Arrow types:
   - FixedSizeList length verification (`list_size`).
@@ -192,6 +195,34 @@ parquet-guard eval-ai --provider mock
 # Run specific split (dev: 40 scenarios, held_out: 24 scenarios)
 parquet-guard eval-ai --provider mock --split dev
 parquet-guard eval-ai --provider mock --split held_out
+```
+
+### 13. Empirical Query Engine Verification (`verify-engine`)
+Directly probe runtime execution across PyArrow, DuckDB, and Polars:
+```bash
+# Probe all installed engines against a Parquet directory
+parquet-guard verify-engine data/lake/ -c contracts/baseline.json
+
+# Probe specific engine with strict disagreement failure in CI
+parquet-guard verify-engine data/lake/ --engine polars --engine duckdb --fail-on-disagreement
+
+# Export JSON report
+parquet-guard verify-engine data/sample.parquet --format json -o engine_report.json
+```
+
+### 14. Pytest Integration
+Assert schema and engine compatibility directly within your Python test suites:
+```python
+from parquet_guard.testing import assert_engine_verified, assert_schema_compatible
+
+def test_pipeline_output(tmp_path):
+    output_parquet = run_my_pipeline(tmp_path)
+    
+    # Assert structural compatibility against golden contract
+    assert_schema_compatible(output_parquet, "contracts/golden.json", mode="permissive")
+    
+    # Probe real query engines for runtime compatibility
+    assert_engine_verified(output_parquet, engines=["duckdb", "polars"])
 ```
 
 ---

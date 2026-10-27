@@ -31,7 +31,9 @@ def test_zero_row_parquet_file(temp_dir: Path) -> None:
 
     contract = inspect_schema(file_path)
     assert len(contract.fields) == 2
-    assert contract.get_field("col_a").type == "int32"
+    f_a = contract.get_field("col_a")
+    assert f_a is not None
+    assert f_a.type == "int32"
 
 
 def test_nested_struct_and_list_types(temp_dir: Path) -> None:
@@ -61,8 +63,10 @@ def test_nested_struct_and_list_types(temp_dir: Path) -> None:
     contract = inspect_schema(file_path)
     assert len(contract.fields) == 2
     tags_field = contract.get_field("tags")
+    assert tags_field is not None
     assert "list" in tags_field.type.lower()
     meta_field = contract.get_field("metadata")
+    assert meta_field is not None
     assert "struct" in meta_field.type.lower()
 
 

@@ -118,6 +118,17 @@ class ConsumerContract(BaseModel):
     target_dataset: Optional[str] = Field(
         default=None, description="Optional dataset identifier or pattern this consumer attaches to"
     )
+    contract_direction: str = Field(
+        default="BACKWARD",
+        description="Contract compatibility direction: 'BACKWARD' (default), 'FORWARD', or 'FULL'",
+    )
+    criticality: str = Field(
+        default="CRITICAL",
+        description="Consumer importance level: 'CRITICAL', 'STANDARD', or 'INFORMATIONAL'",
+    )
+    field_renames: Dict[str, str] = Field(
+        default_factory=dict, description="Explicit mapping of old field names to new producer field names"
+    )
     fields: List[ConsumerFieldRequirement] = Field(
         default_factory=list, description="List of declared field expectations"
     )
@@ -262,6 +273,11 @@ class ConsumerImpactEvaluation(BaseModel):
         description="Technically incompatible/uncertain fields that do not block CI (non-critical)",
     )
     summary: str = Field(description="Concise evaluation summary")
+    contract_direction: str = Field(default="BACKWARD", description="Evaluated contract direction")
+    criticality: str = Field(default="CRITICAL", description="Consumer criticality level")
+    explicit_renames_applied: Dict[str, str] = Field(
+        default_factory=dict, description="Explicit rename mappings applied during evaluation"
+    )
     recommendations: List[str] = Field(
         default_factory=list, description="Actionable recommendations for this consumer"
     )
@@ -886,10 +902,14 @@ def evaluate_single_consumer(
     dimension_mismatches: List[str] = []
     path_errors: List[str] = []
     uncertain_fields: List[str] = []
+    applied_renames: Dict[str, str] = {}
 
     # 1. Check each declared field requirement
     for req in consumer.fields:
-        res = resolve_field_path(schema.fields, req.name)
+        target_name = consumer.field_renames.get(req.name, req.name)
+        if target_name != req.name:
+            applied_renames[req.name] = target_name
+        res = resolve_field_path(schema.fields, target_name)
         if res.field is None:
             if res.error_kind == "missing" and not req.required:
                 field_evals.append(
@@ -1064,6 +1084,9 @@ def evaluate_single_consumer(
         ordering_violation=ordering_violation,
         blocking_fields=blocking_fields,
         non_blocking_violations=non_blocking_violations,
+        contract_direction=consumer.contract_direction,
+        criticality=consumer.criticality,
+        explicit_renames_applied=applied_renames,
         summary=summary,
         recommendations=recs,
     )

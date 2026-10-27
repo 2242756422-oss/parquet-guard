@@ -8,6 +8,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+pytest_plugins = ["parquet_guard.testing.pytest_plugin"]
+
 
 @pytest.fixture
 def temp_dir(tmp_path: Path) -> Path:

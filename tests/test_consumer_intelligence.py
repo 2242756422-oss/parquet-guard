@@ -909,3 +909,65 @@ def test_real_pyarrow_engine_behavior_vs_declared_consumer_contracts(tmp_path: P
     projected = pq.read_table(f_drifted, columns=["user_id"])
     assert projected.num_rows == 2
     assert projected.schema.field("user_id").type == pa.int64()
+
+
+def test_consumer_direction_and_criticality_independence() -> None:
+    """Verify that consumer criticality does not mutate underlying technical compatibility status."""
+    schema = SchemaContract(
+        name="test_dataset",
+        fields=[FieldDefinition(name="id", type="int32", nullable=False)],
+    )
+    # Consumer expects string (incompatible type), but criticality is INFORMATIONAL
+    consumer = ConsumerContract(
+        consumer_id="info-consumer",
+        consumer_name="Informational Dashboard",
+        criticality="INFORMATIONAL",
+        contract_direction="BACKWARD",
+        fields=[
+            ConsumerFieldRequirement(
+                name="id",
+                permitted_types=["string"],
+                critical=False,
+            )
+        ],
+    )
+    eval_res = evaluate_single_consumer(schema, consumer)
+    # Technical status must remain INCOMPATIBLE (not masked by informational criticality)
+    assert eval_res.status == ConsumerCompatibilityStatus.INCOMPATIBLE
+    # But CI is non-blocking because requirement is not critical
+    assert eval_res.is_blocking is False
+    assert eval_res.criticality == "INFORMATIONAL"
+    assert eval_res.contract_direction == "BACKWARD"
+
+
+def test_consumer_explicit_field_rename_mapping() -> None:
+    """Verify that field renaming only succeeds with explicit mapping (no fuzzy/similarity guessing)."""
+    # Producer renamed account_id -> acc_id
+    schema = SchemaContract(
+        name="renamed_dataset",
+        fields=[
+            FieldDefinition(name="acc_id", type="int64", nullable=False),
+            FieldDefinition(name="balance", type="float64", nullable=False),
+        ],
+    )
+    # Consumer 1 without rename mapping fails
+    consumer_unmapped = ConsumerContract(
+        consumer_id="legacy-service",
+        consumer_name="Legacy Service",
+        fields=[ConsumerFieldRequirement(name="account_id", permitted_types=["int64"])],
+    )
+    res_unmapped = evaluate_single_consumer(schema, consumer_unmapped)
+    assert res_unmapped.status == ConsumerCompatibilityStatus.INCOMPATIBLE
+    assert "account_id" in res_unmapped.missing_required_fields
+
+    # Consumer 2 with explicit field_renames succeeds
+    consumer_mapped = ConsumerContract(
+        consumer_id="updated-service",
+        consumer_name="Updated Service",
+        field_renames={"account_id": "acc_id"},
+        fields=[ConsumerFieldRequirement(name="account_id", permitted_types=["int64"])],
+    )
+    res_mapped = evaluate_single_consumer(schema, consumer_mapped)
+    assert res_mapped.status == ConsumerCompatibilityStatus.COMPATIBLE
+    assert res_mapped.explicit_renames_applied.get("account_id") == "acc_id"
+    assert len(res_mapped.missing_required_fields) == 0

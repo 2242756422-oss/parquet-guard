@@ -199,6 +199,22 @@ class MigrationVerificationResult(BaseModel):
         default=False,
         description="True if any migration step requires domain business semantics that cannot be verified synthetically",
     )
+    validation_mode: str = Field(
+        default="synthetic",
+        description="'synthetic' (Mode 1, zero customer data) or 'user_sample' (Mode 2, user-authorized sample)",
+    )
+    data_rows_read: int = Field(
+        default=0,
+        description="Number of user production or sample data rows loaded into isolated sandbox memory",
+    )
+    user_data_authorized: bool = Field(
+        default=False,
+        description="True if operator explicitly authorized loading sample data rows",
+    )
+    privacy_statement: str = Field(
+        default="Zero customer row data leaked or uploaded. Operations executed strictly in isolated ephemeral sandbox.",
+        description="Privacy and data transmission disclosure statement",
+    )
     errors: List[str] = Field(default_factory=list, description="Fatal errors encountered during execution")
     warnings: List[str] = Field(default_factory=list, description="Warnings or non-fatal risks")
     execution_latency_ms: float = Field(default=0.0, description="Verification latency in milliseconds")
@@ -724,10 +740,10 @@ def _validate_output_schema_against_target(
         if "." in ch.field_name or "[" in ch.field_name or "<" in ch.field_name:
             if (
                 ch.severity in (Severity.BREAKING, Severity.WARNING)
-                and ch.change_type != ChangeType.REORDERED
+                and ch.change_type != ChangeType.FIELD_ORDER_CHANGED
             ):
                 discrepancies.append(
-                    f"Nested structural discrepancy at '{ch.field_name}' ({ch.change_type.value}): {ch.message}"
+                    f"Nested structural discrepancy at '{ch.field_name}' ({ch.change_type.value}): {ch.description}"
                 )
 
     schema_matched = len(discrepancies) == 0
@@ -741,6 +757,9 @@ def verify_migration_plan(
     test_table: Optional[pa.Table] = None,
     extreme_timestamp_years: bool = False,
     overflow_int_values: bool = False,
+    sample_file: Optional[str] = None,
+    user_data_authorized: bool = False,
+    validation_mode: str = "synthetic",
 ) -> MigrationVerificationResult:
     """Verify a migration plan end-to-end in a temporary Parquet sandbox."""
     if sample_rows < 1:
@@ -749,11 +768,27 @@ def verify_migration_plan(
     t0 = time.perf_counter()
     errors: List[str] = []
     warnings: List[str] = []
+    actual_validation_mode = validation_mode
+    data_rows_read = 0
+
+    if sample_file is not None and not user_data_authorized:
+        raise PermissionError(
+            "Explicit operator authorization (user_data_authorized=True) required to load sample user data rows."
+        )
 
     try:
-        if test_table is not None:
+        if sample_file is not None:
+            input_table = pq.read_table(sample_file)
+            if sample_rows > 0 and input_table.num_rows > sample_rows:
+                input_table = input_table.slice(0, sample_rows)
+            sample_rows = input_table.num_rows
+            data_rows_read = sample_rows
+            actual_validation_mode = "user_sample"
+        elif test_table is not None:
             input_table = test_table
             sample_rows = input_table.num_rows
+            data_rows_read = sample_rows
+            actual_validation_mode = "user_sample" if user_data_authorized else "synthetic"
         else:
             input_table = generate_synthetic_parquet_table(
                 plan.source_contract,
@@ -969,6 +1004,9 @@ def verify_migration_plan(
             incompatible_consumers=incompatible_consumers,
             blocking_consumers=blocking_consumers,
             uncertain_semantics=uncertain_semantics,
+            validation_mode=actual_validation_mode,
+            data_rows_read=data_rows_read,
+            user_data_authorized=user_data_authorized,
             errors=errors,
             warnings=warnings,
             execution_latency_ms=round(elapsed, 2),

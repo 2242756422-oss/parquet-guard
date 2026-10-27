@@ -195,6 +195,23 @@ TOOLS_DEFINITIONS: List[Dict[str, Any]] = [
             "required": ["output_html", "dataset_dir"],
         },
     },
+    {
+        "name": "verify_engine_compatibility",
+        "description": "Probe and verify runtime query engine compatibility (PyArrow, DuckDB, Polars) on Parquet files, detecting rule vs runtime disagreements.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string", "description": "Path to Parquet file or directory"},
+                "contract_path": {"type": "string", "description": "Optional path to SchemaContract JSON"},
+                "row_limit": {
+                    "type": "integer",
+                    "default": 10,
+                    "description": "Sample row read limit for runtime probes",
+                },
+            },
+            "required": ["file_path"],
+        },
+    },
 ]
 
 _TOOL_SCHEMA_MAP: Dict[str, Dict[str, Any]] = {t["name"]: t["inputSchema"] for t in TOOLS_DEFINITIONS}
@@ -410,6 +427,32 @@ class MCPServer:
                         {
                             "type": "text",
                             "text": f"Successfully generated HTML report at: {out_path}",
+                        }
+                    ]
+                }
+
+            elif name == "verify_engine_compatibility":
+                from parquet_guard.verification import verify_engine_compatibility
+
+                f_path = _resolve_safe_path(arguments["file_path"], self.allowed_dirs)
+                c_path_str = arguments.get("contract_path")
+                contract_obj = None
+                if c_path_str:
+                    c_path = _resolve_safe_path(c_path_str, self.allowed_dirs)
+                    c_data = _read_bounded_json(c_path)
+                    contract_obj = SchemaContract.model_validate(c_data)
+
+                row_lim = int(arguments.get("row_limit", 10))
+                verif_report = verify_engine_compatibility(
+                    f_path,
+                    contract=contract_obj,
+                    row_limit=row_lim,
+                )
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": verif_report.model_dump_json(indent=2),
                         }
                     ]
                 }

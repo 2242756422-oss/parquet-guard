@@ -39,10 +39,18 @@ dev = [
     "pytest>=8.0.0",
     "ruff>=0.3.0",
     "mypy>=1.9.0",
+    "hypothesis>=6.0.0",
+]
+engines = [
+    "duckdb>=0.9.0",
+    "polars>=0.20.0",
 ]
 
 [project.scripts]
 parquet-guard = "parquet_guard.cli:main"
+
+[project.entry-points.pytest11]
+parquet_guard = "parquet_guard.testing.pytest_plugin"
 
 [project.urls]
 Homepage = "https://github.com/2242756422-oss/parquet-guard"

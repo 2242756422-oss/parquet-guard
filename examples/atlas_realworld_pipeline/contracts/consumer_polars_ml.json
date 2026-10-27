@@ -1,0 +1,24 @@
+{
+  "version": "1.0",
+  "consumer_id": "polars-fraud-ml",
+  "consumer_name": "Polars Real-Time Fraud Detection ML Pipeline",
+  "contract_direction": "BACKWARD",
+  "criticality": "CRITICAL",
+  "allow_extra_fields": true,
+  "fields": [
+    {
+      "name": "order_id",
+      "required": true,
+      "permitted_types": ["int64"],
+      "allow_null": false,
+      "critical": true
+    },
+    {
+      "name": "subtotal",
+      "required": true,
+      "permitted_types": ["decimal128(10, 2)"],
+      "allow_null": false,
+      "critical": true
+    }
+  ]
+}

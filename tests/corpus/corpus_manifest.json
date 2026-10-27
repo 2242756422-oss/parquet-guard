@@ -1,0 +1,200 @@
+[
+  {
+    "case_id": "CORPUS-01-INT-WIDEN",
+    "category": "numeric_widening_narrowing",
+    "description": "Safe integer widening from int32 to int64.",
+    "source": "GENERATED",
+    "license": "Apache-2.0",
+    "writer": "pyarrow 26.0.0",
+    "probe_operation": "READ",
+    "baseline_file": "fixtures/case01_int_base.parquet",
+    "target_file": "fixtures/case01_int_target.parquet",
+    "expected_metadata_verdict": "COMPATIBLE",
+    "expected_pyarrow_verdict": "PASS",
+    "expected_duckdb_verdict": "PASS",
+    "expected_polars_verdict": "PASS",
+    "expected_error_codes": [
+      "TYPE_WIDENED"
+    ],
+    "known_uncertainty": null,
+    "independent_oracle": "Signed 32-bit integer values fit completely within signed 64-bit int without loss."
+  },
+  {
+    "case_id": "CORPUS-02-INT-NARROW",
+    "category": "numeric_widening_narrowing",
+    "description": "Unsafe integer narrowing from int64 to int32 in multi-partition union.",
+    "source": "GENERATED",
+    "license": "Apache-2.0",
+    "writer": "pyarrow 26.0.0",
+    "probe_operation": "SCHEMA_UNION",
+    "probe_files": [
+      "fixtures/case02_narrow_target.parquet",
+      "fixtures/case02_narrow_base.parquet"
+    ],
+    "baseline_file": "fixtures/case02_narrow_base.parquet",
+    "target_file": "fixtures/case02_narrow_target.parquet",
+    "expected_metadata_verdict": "INCOMPATIBLE",
+    "expected_pyarrow_verdict": "FAIL",
+    "expected_duckdb_verdict": "PASS",
+    "expected_polars_verdict": "FAIL",
+    "expected_error_codes": [
+      "TYPE_NARROWED"
+    ],
+    "known_uncertainty": "DuckDB automatically unifies int32 and int64 partitions by widening to int64, whereas Polars and PyArrow dataset (when encountering int32 first) fail.",
+    "independent_oracle": "Narrowing int64 to int32 causes numeric overflow when int64 partition has values >= 2^31."
+  },
+  {
+    "case_id": "CORPUS-03-DECIMAL-SCALE-SHIFT",
+    "category": "decimal_precision_scale",
+    "description": "Decimal scale modification from (10, 2) to (12, 4) probed in multi-partition union.",
+    "source": "GENERATED",
+    "license": "Apache-2.0",
+    "writer": "pyarrow 26.0.0",
+    "probe_operation": "SCHEMA_UNION",
+    "probe_files": [
+      "fixtures/case03_dec_base.parquet",
+      "fixtures/case03_dec_target.parquet"
+    ],
+    "baseline_file": "fixtures/case03_dec_base.parquet",
+    "target_file": "fixtures/case03_dec_target.parquet",
+    "expected_metadata_verdict": "INCOMPATIBLE",
+    "expected_pyarrow_verdict": "FAIL",
+    "expected_duckdb_verdict": "PASS",
+    "expected_polars_verdict": "FAIL",
+    "expected_error_codes": [
+      "DECIMAL_SCALE_MISMATCH"
+    ],
+    "known_uncertainty": "DuckDB automatically unifies decimal scales dynamically during multi-partition queries, whereas Polars and PyArrow schema unification strictly reject scale shifts.",
+    "independent_oracle": "In Parquet physical storage, decimals are stored as unscaled integers. 1234 at scale 2 is $12.34; at scale 4 it represents $0.1234."
+  },
+  {
+    "case_id": "CORPUS-04-TS-UNIT-OVERFLOW",
+    "category": "temporal_boundaries",
+    "description": "Timestamp unit precision widening from seconds to nanoseconds.",
+    "source": "GENERATED",
+    "license": "Apache-2.0",
+    "writer": "pyarrow 26.0.0",
+    "probe_operation": "READ",
+    "baseline_file": "fixtures/case04_ts_base.parquet",
+    "target_file": "fixtures/case04_ts_target.parquet",
+    "expected_metadata_verdict": "WARNING",
+    "expected_pyarrow_verdict": "PASS",
+    "expected_duckdb_verdict": "PASS",
+    "expected_polars_verdict": "PASS",
+    "expected_error_codes": [
+      "TEMPORAL_OVERFLOW_RISK"
+    ],
+    "known_uncertainty": "Timestamps after 2262-04-11 overflow signed 64-bit nanoseconds.",
+    "independent_oracle": "Nanosecond timestamps increase resolution 10^9x but restrict dynamic range to 1677-2262 AD."
+  },
+  {
+    "case_id": "CORPUS-05-NESTED-STRUCT-FIELD-DROP",
+    "category": "nested_structures",
+    "description": "Dropping a child field (email) inside a nested Struct.",
+    "source": "GENERATED",
+    "license": "Apache-2.0",
+    "writer": "pyarrow 26.0.0",
+    "probe_operation": "READ",
+    "expected_columns": [
+      "user.name",
+      "user.email"
+    ],
+    "baseline_file": "fixtures/case05_struct_base.parquet",
+    "target_file": "fixtures/case05_struct_target.parquet",
+    "expected_metadata_verdict": "INCOMPATIBLE",
+    "expected_pyarrow_verdict": "FAIL",
+    "expected_duckdb_verdict": "FAIL",
+    "expected_polars_verdict": "FAIL",
+    "expected_error_codes": [
+      "FIELD_DROPPED"
+    ],
+    "known_uncertainty": null,
+    "independent_oracle": "Downstream readers selecting user.email fail with column missing or binder error."
+  },
+  {
+    "case_id": "CORPUS-06-NULLABILITY-RELAXATION",
+    "category": "nullability_transitions",
+    "description": "Baseline promises non-null, but target introduces null values.",
+    "source": "GENERATED",
+    "license": "Apache-2.0",
+    "writer": "pyarrow 26.0.0",
+    "probe_operation": "READ",
+    "baseline_file": "fixtures/case06_null_base.parquet",
+    "target_file": "fixtures/case06_null_target.parquet",
+    "expected_metadata_verdict": "INCOMPATIBLE",
+    "expected_pyarrow_verdict": "PASS",
+    "expected_duckdb_verdict": "PASS",
+    "expected_polars_verdict": "PASS",
+    "expected_error_codes": [
+      "NULLABILITY_CHANGED"
+    ],
+    "known_uncertainty": "Engines can physically read null strings without crashing, but downstream business logic expecting non-null invariants experiences null-pointer exceptions.",
+    "independent_oracle": "A non-nullable assertion cannot be satisfied by partitions containing physical null values."
+  },
+  {
+    "case_id": "CORPUS-07-VECTOR-DIMENSION-MISMATCH",
+    "category": "fixed_size_list_dimensions",
+    "description": "FixedSizeList length mismatch between vector 4-d and 8-d in partition union.",
+    "source": "GENERATED",
+    "license": "Apache-2.0",
+    "writer": "pyarrow 26.0.0",
+    "probe_operation": "SCHEMA_UNION",
+    "probe_files": [
+      "fixtures/case07_vec_base.parquet",
+      "fixtures/case07_vec_target.parquet"
+    ],
+    "baseline_file": "fixtures/case07_vec_base.parquet",
+    "target_file": "fixtures/case07_vec_target.parquet",
+    "expected_metadata_verdict": "INCOMPATIBLE",
+    "expected_pyarrow_verdict": "PASS",
+    "expected_duckdb_verdict": "PASS",
+    "expected_polars_verdict": "FAIL",
+    "expected_error_codes": [
+      "CONTAINER_PARAM_CHANGED"
+    ],
+    "known_uncertainty": "PyArrow dataset tolerates vector dimension shifts by decaying to variable-length list, whereas Polars strictly rejects dimension shifts.",
+    "independent_oracle": "Fixed dimension vector databases and matrix operators crash on dimension length mismatch."
+  },
+  {
+    "case_id": "CORPUS-08-CORRUPTED-MAGIC-BYTES",
+    "category": "corrupted_or_truncated",
+    "description": "Corrupted file with invalid magic bytes instead of PAR1.",
+    "source": "GENERATED",
+    "license": "Apache-2.0",
+    "writer": "synthetic-raw",
+    "probe_operation": "READ",
+    "baseline_file": "fixtures/case08_corrupted_magic.parquet",
+    "target_file": "fixtures/case08_corrupted_magic.parquet",
+    "expected_metadata_verdict": "ERROR",
+    "expected_pyarrow_verdict": "FAIL",
+    "expected_duckdb_verdict": "FAIL",
+    "expected_polars_verdict": "FAIL",
+    "expected_error_codes": [
+      "CORRUPTED_FILE"
+    ],
+    "known_uncertainty": null,
+    "independent_oracle": "Parquet files must begin and end with 4-byte magic string PAR1."
+  },
+  {
+    "case_id": "CORPUS-09-ADVERSARIAL-SQL-COLUMN",
+    "category": "adversarial_inputs",
+    "description": "Adversarial column names containing SQL quotes, semicolons, and injection patterns.",
+    "source": "GENERATED",
+    "license": "Apache-2.0",
+    "writer": "pyarrow 26.0.0",
+    "probe_operation": "READ",
+    "expected_columns": [
+      "col'; DROP TABLE users; --",
+      "col\"with\"\"quotes"
+    ],
+    "baseline_file": "fixtures/case09_adversarial_base.parquet",
+    "target_file": "fixtures/case09_adversarial_target.parquet",
+    "expected_metadata_verdict": "COMPATIBLE",
+    "expected_pyarrow_verdict": "PASS",
+    "expected_duckdb_verdict": "PASS",
+    "expected_polars_verdict": "PASS",
+    "expected_error_codes": [],
+    "known_uncertainty": null,
+    "independent_oracle": "Engines with safe identifier quoting must project weird column names without SQL injection execution."
+  }
+]
