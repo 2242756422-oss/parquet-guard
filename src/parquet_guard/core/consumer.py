@@ -158,6 +158,45 @@ class ConsumerContract(BaseModel):
             )
         return v
 
+    @field_validator("contract_direction")
+    @classmethod
+    def validate_direction(cls, v: str) -> str:
+        upper = v.upper()
+        if upper not in {"BACKWARD", "FORWARD", "FULL"}:
+            raise ValueError(f"Invalid contract_direction '{v}'. Must be one of: BACKWARD, FORWARD, FULL")
+        return upper
+
+    @field_validator("criticality")
+    @classmethod
+    def validate_criticality(cls, v: str) -> str:
+        upper = v.upper()
+        if upper not in {"CRITICAL", "STANDARD", "INFORMATIONAL"}:
+            raise ValueError(f"Invalid criticality '{v}'. Must be one of: CRITICAL, STANDARD, INFORMATIONAL")
+        return upper
+
+    @field_validator("field_renames")
+    @classmethod
+    def validate_renames(cls, v: Dict[str, str]) -> Dict[str, str]:
+        for src, dst in v.items():
+            if src == dst:
+                raise ValueError(f"Self-rename not permitted in field_renames: '{src}' -> '{dst}'")
+        seen_targets: Dict[str, str] = {}
+        for src, dst in v.items():
+            if dst in seen_targets:
+                raise ValueError(
+                    f"Collision in field_renames: multiple fields ('{seen_targets[dst]}' and '{src}') map to '{dst}'"
+                )
+            seen_targets[dst] = src
+        for start_key in v:
+            visited = set()
+            curr = start_key
+            while curr in v:
+                visited.add(curr)
+                curr = v[curr]
+                if curr in visited:
+                    raise ValueError(f"Circular rename detected in field_renames involving '{curr}'")
+        return v
+
     def get_field_requirement(self, name: str) -> Optional[ConsumerFieldRequirement]:
         """Find requirement for a field by name."""
         for f in self.fields:
@@ -1038,7 +1077,11 @@ def evaluate_single_consumer(
     non_blocking_violations = [
         fe.field_name for fe in field_evals if not fe.is_blocking and fe.status in _BLOCKING_STATUSES
     ]
-    is_blocking = len(blocking_fields) > 0
+    # Criticality policy: INFORMATIONAL consumers never block CI even on technical breakages
+    if consumer.criticality.upper() == "INFORMATIONAL":
+        is_blocking = False
+    else:
+        is_blocking = len(blocking_fields) > 0
 
     recs: List[str] = []
     if missing_fields:
