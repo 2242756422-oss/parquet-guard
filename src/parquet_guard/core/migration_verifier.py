@@ -212,7 +212,7 @@ class MigrationVerificationResult(BaseModel):
         description="True if operator explicitly authorized loading sample data rows",
     )
     privacy_statement: str = Field(
-        default="Zero customer row data leaked or uploaded. Operations executed strictly in isolated ephemeral sandbox.",
+        default="Ephemeral in-process sandbox verification. No customer data uploaded or transmitted across external networks.",
         description="Privacy and data transmission disclosure statement",
     )
     errors: List[str] = Field(default_factory=list, description="Fatal errors encountered during execution")
@@ -778,7 +778,16 @@ def verify_migration_plan(
 
     try:
         if sample_file is not None:
-            input_table = pq.read_table(sample_file)
+            # Bounded batch reading: do not read full file into memory before slicing
+            pf = pq.ParquetFile(sample_file)
+            batches = []
+            total_read = 0
+            for batch in pf.iter_batches(batch_size=sample_rows):
+                batches.append(batch)
+                total_read += len(batch)
+                if total_read >= sample_rows:
+                    break
+            input_table = pa.Table.from_batches(batches) if batches else pf.schema_arrow.empty_table()
             if sample_rows > 0 and input_table.num_rows > sample_rows:
                 input_table = input_table.slice(0, sample_rows)
             sample_rows = input_table.num_rows
@@ -786,9 +795,11 @@ def verify_migration_plan(
             actual_validation_mode = "user_sample"
         elif test_table is not None:
             input_table = test_table
+            if sample_rows > 0 and input_table.num_rows > sample_rows:
+                input_table = input_table.slice(0, sample_rows)
             sample_rows = input_table.num_rows
             data_rows_read = sample_rows
-            actual_validation_mode = "user_sample" if user_data_authorized else "synthetic"
+            actual_validation_mode = "user_sample" if user_data_authorized else "provided_in_memory"
         else:
             input_table = generate_synthetic_parquet_table(
                 plan.source_contract,
@@ -797,6 +808,7 @@ def verify_migration_plan(
                 extreme_timestamp_years=extreme_timestamp_years,
                 overflow_int_values=overflow_int_values,
             )
+            actual_validation_mode = "synthetic"
     except Exception as exc:
         elapsed = (time.perf_counter() - t0) * 1000.0
         return MigrationVerificationResult(

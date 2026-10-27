@@ -561,7 +561,7 @@ def test_migration_mode2_user_sample_data_requires_authorization(tmp_path: Path)
     assert res.validation_mode == "user_sample"
     assert res.data_rows_read == 2
     assert res.user_data_authorized is True
-    assert "Zero customer row data leaked" in res.privacy_statement
+    assert "sandbox" in res.privacy_statement.lower()
 
     # 3. Invariant: Original sample file is 100% byte-for-byte identical (unmutated!)
     assert p_orig.read_bytes() == orig_bytes
