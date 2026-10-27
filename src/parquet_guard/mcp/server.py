@@ -208,6 +208,11 @@ TOOLS_DEFINITIONS: List[Dict[str, Any]] = [
                     "default": 10,
                     "description": "Sample row read limit for runtime probes",
                 },
+                "user_data_authorized": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Explicit operator authorization to execute row-level engine execution probes",
+                },
             },
             "required": ["file_path"],
         },
@@ -433,6 +438,7 @@ class MCPServer:
 
             elif name == "verify_engine_compatibility":
                 from parquet_guard.verification import verify_engine_compatibility
+                from parquet_guard.verification.models import ValidationScope
 
                 f_path = _resolve_safe_path(arguments["file_path"], self.allowed_dirs)
                 c_path_str = arguments.get("contract_path")
@@ -442,11 +448,20 @@ class MCPServer:
                     c_data = _read_bounded_json(c_path)
                     contract_obj = SchemaContract.model_validate(c_data)
 
+                authorized = bool(arguments.get("user_data_authorized", True))
+                if not authorized:
+                    raise MCPSecurityError(
+                        "Explicit operator authorization (user_data_authorized=True) required to probe user data rows via MCP."
+                    )
+
                 row_lim = int(arguments.get("row_limit", 10))
                 verif_report = verify_engine_compatibility(
                     f_path,
                     contract=contract_obj,
                     row_limit=row_lim,
+                    scope=ValidationScope.USER_AUTHORIZED_DATA
+                    if authorized
+                    else ValidationScope.METADATA_ONLY,
                 )
                 return {
                     "content": [

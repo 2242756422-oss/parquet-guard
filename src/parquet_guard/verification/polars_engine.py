@@ -113,16 +113,27 @@ class PolarsEngineAdapter(BaseEngineAdapter):
         start_time = time.perf_counter()
         invariants = ["polars_strict_cast"]
         try:
-            df = pl.read_parquet(file_path)
+            # Bounded streaming read via lazy frame scanning
+            lf = pl.scan_parquet(file_path)
             if row_limit > 0:
-                df = df.slice(0, row_limit)
+                lf = lf.limit(row_limit)
+            df = lf.collect()
 
             cast_exprs = []
             for col, target_type in target_field_types.items():
                 if col in df.columns:
                     pl_type = self._map_to_polars_type(target_type)
-                    if pl_type is not None:
-                        cast_exprs.append(pl.col(col).cast(pl_type, strict=True))
+                    if pl_type is None:
+                        return EngineProbeResult(
+                            engine_name=self.name,
+                            engine_version=self.version(),
+                            operation=EngineProbeOperation.CAST,
+                            runtime_verdict=RuntimeVerdict.UNSUPPORTED,
+                            error_category="UNSUPPORTED_TYPE_MAPPING",
+                            error_message=f"Target type '{target_type}' for column '{col}' cannot be mapped to Polars.",
+                            tested_invariants=invariants,
+                        )
+                    cast_exprs.append(pl.col(col).cast(pl_type, strict=True))
 
             if cast_exprs:
                 df = df.with_columns(cast_exprs)
@@ -164,10 +175,12 @@ class PolarsEngineAdapter(BaseEngineAdapter):
                 engine_name=self.name,
                 engine_version=self.version(),
                 operation=EngineProbeOperation.SCHEMA_UNION,
-                runtime_verdict=RuntimeVerdict.PASS,
+                runtime_verdict=RuntimeVerdict.INCONCLUSIVE,
                 duration_ms=0.0,
-                tested_invariants=["schema_union"],
-                details={"notice": "Trivially unified single file."},
+                error_category="INSUFFICIENT_PARTITIONS",
+                error_message="Multi-partition schema union requires at least 2 files; single file skipped.",
+                tested_invariants=[],
+                details={"notice": "Single file provided; schema union inconclusive."},
             )
 
         start_time = time.perf_counter()

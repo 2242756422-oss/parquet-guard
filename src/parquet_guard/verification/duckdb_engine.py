@@ -125,21 +125,62 @@ class DuckDBEngineAdapter(BaseEngineAdapter):
             existing_cols = {row[0] for row in desc}
 
             cast_exprs = []
+            null_check_exprs = []
+            mapped_cols = []
             for col, target_type in target_field_types.items():
                 if col in existing_cols:
                     # Map standard Arrow type strings to DuckDB types where needed
                     ddb_type = self._map_to_duckdb_type(target_type)
-                    cast_exprs.append(
-                        f"TRY_CAST({quote_sql_identifier(col)} AS {ddb_type}) AS {quote_sql_identifier(col)}"
+                    if ddb_type is None:
+                        return EngineProbeResult(
+                            engine_name=self.name,
+                            engine_version=self.version(),
+                            operation=EngineProbeOperation.CAST,
+                            runtime_verdict=RuntimeVerdict.UNSUPPORTED,
+                            error_category="UNSUPPORTED_TYPE_MAPPING",
+                            error_message=f"Target type '{target_type}' for column '{col}' cannot be mapped to DuckDB.",
+                            tested_invariants=invariants,
+                        )
+                    q_col = quote_sql_identifier(col)
+                    cast_exprs.append(f"CAST({q_col} AS {ddb_type}) AS {q_col}")
+                    null_check_exprs.append(
+                        f"COUNT({q_col}) AS {quote_sql_identifier(col + '__orig_nn')}, "
+                        f"COUNT(TRY_CAST({q_col} AS {ddb_type})) AS {quote_sql_identifier(col + '__cast_nn')}"
                     )
+                    mapped_cols.append((col, ddb_type))
 
             if not cast_exprs:
-                select_clause = "*"
+                executed_sql = f"SELECT * FROM read_parquet(?) LIMIT {int(row_limit)}"
+                res = con.execute(executed_sql, [file_path]).fetchall()
             else:
-                select_clause = ", ".join(cast_exprs)
+                # 1. Null-injection check: ensure TRY_CAST does not silently turn valid values to NULL
+                null_check_sql = f"SELECT {', '.join(null_check_exprs)} FROM (SELECT * FROM read_parquet(?) LIMIT {int(row_limit)}) sub"
+                row_check = con.execute(null_check_sql, [file_path]).fetchone()
+                if row_check:
+                    for i, (col, ddb_type) in enumerate(mapped_cols):
+                        orig_nn = row_check[i * 2]
+                        cast_nn = row_check[i * 2 + 1]
+                        if orig_nn is not None and cast_nn is not None and cast_nn < orig_nn:
+                            dur_ms = (time.perf_counter() - start_time) * 1000.0
+                            return EngineProbeResult(
+                                engine_name=self.name,
+                                engine_version=self.version(),
+                                operation=EngineProbeOperation.CAST,
+                                runtime_verdict=RuntimeVerdict.FAIL,
+                                duration_ms=dur_ms,
+                                error_category="NULL_INJECTION",
+                                error_message=(
+                                    f"Cast on column '{col}' to '{ddb_type}' resulted in null injection: "
+                                    f"{orig_nn - cast_nn} non-null values failed conversion."
+                                ),
+                                executed_expression=null_check_sql,
+                                tested_invariants=invariants,
+                            )
 
-            executed_sql = f"SELECT {select_clause} FROM read_parquet(?) LIMIT {int(row_limit)}"
-            res = con.execute(executed_sql, [file_path]).fetchall()
+                # 2. Strict CAST evaluation
+                select_clause = ", ".join(cast_exprs)
+                executed_sql = f"SELECT {select_clause} FROM read_parquet(?) LIMIT {int(row_limit)}"
+                res = con.execute(executed_sql, [file_path]).fetchall()
 
             dur_ms = (time.perf_counter() - start_time) * 1000.0
             return EngineProbeResult(
@@ -183,10 +224,12 @@ class DuckDBEngineAdapter(BaseEngineAdapter):
                 engine_name=self.name,
                 engine_version=self.version(),
                 operation=EngineProbeOperation.SCHEMA_UNION,
-                runtime_verdict=RuntimeVerdict.PASS,
+                runtime_verdict=RuntimeVerdict.INCONCLUSIVE,
                 duration_ms=0.0,
-                tested_invariants=["schema_union"],
-                details={"notice": "Trivially unified single file."},
+                error_category="INSUFFICIENT_PARTITIONS",
+                error_message="Multi-partition schema union requires at least 2 files; single file skipped.",
+                tested_invariants=[],
+                details={"notice": "Single file provided; schema union inconclusive."},
             )
 
         start_time = time.perf_counter()
@@ -230,7 +273,7 @@ class DuckDBEngineAdapter(BaseEngineAdapter):
                 con.close()
 
     @staticmethod
-    def _map_to_duckdb_type(arrow_type: str) -> str:
+    def _map_to_duckdb_type(arrow_type: str) -> Optional[str]:
         """Map standard Arrow type identifiers to DuckDB SQL types."""
         t = arrow_type.strip().lower()
         if t in ("int8", "int16", "int32", "int64"):
@@ -256,4 +299,4 @@ class DuckDBEngineAdapter(BaseEngineAdapter):
             return "TIMESTAMP"
         if t.startswith("date"):
             return "DATE"
-        return "VARCHAR"
+        return None

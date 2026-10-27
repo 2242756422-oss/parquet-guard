@@ -50,13 +50,36 @@ class PyArrowEngineAdapter(BaseEngineAdapter):
         invariants = ["file_readable", "columns_projectable"]
         try:
             for p in file_paths:
-                tbl = pq.read_table(p, columns=expected_columns)
+                pf = pq.ParquetFile(p)
                 if expected_columns:
                     for col in expected_columns:
-                        if col not in tbl.column_names:
+                        parts = col.split(".")
+                        curr = pf.schema_arrow
+                        found = True
+                        for part in parts:
+                            if hasattr(curr, "get_field_index"):
+                                idx = curr.get_field_index(part)
+                                if idx == -1:
+                                    found = False
+                                    break
+                                curr = curr.field(idx).type
+                            else:
+                                found = False
+                                break
+                        if not found:
                             raise KeyError(f"Expected column '{col}' missing from PyArrow table")
-                if row_limit > 0:
-                    _ = tbl.slice(0, row_limit)
+                # Bounded streaming read: do not load whole table into memory
+                batches = []
+                total_read = 0
+                batch_size = max(1, row_limit) if row_limit > 0 else 10
+                for batch in pf.iter_batches(batch_size=batch_size, columns=expected_columns):
+                    batches.append(batch)
+                    total_read += len(batch)
+                    if row_limit > 0 and total_read >= row_limit:
+                        break
+                tbl = pa.Table.from_batches(batches) if batches else pf.schema_arrow.empty_table()
+                if row_limit > 0 and len(tbl) > row_limit:
+                    tbl = tbl.slice(0, row_limit)
 
             dur_ms = (time.perf_counter() - start_time) * 1000.0
             return EngineProbeResult(
@@ -92,19 +115,43 @@ class PyArrowEngineAdapter(BaseEngineAdapter):
         start_time = time.perf_counter()
         invariants = ["safe_cast_supported", "no_precision_loss"]
         try:
-            tbl = pq.read_table(file_path)
-            if row_limit > 0:
+            pf = pq.ParquetFile(file_path)
+            target_cols = [c for c in target_field_types if c in pf.schema_arrow.names]
+            batches = []
+            total_read = 0
+            batch_size = max(1, row_limit) if row_limit > 0 else 10
+            for batch in pf.iter_batches(batch_size=batch_size, columns=target_cols or None):
+                batches.append(batch)
+                total_read += len(batch)
+                if row_limit > 0 and total_read >= row_limit:
+                    break
+            tbl = pa.Table.from_batches(batches) if batches else pf.schema_arrow.empty_table()
+            if row_limit > 0 and len(tbl) > row_limit:
                 tbl = tbl.slice(0, row_limit)
 
             casted_cols = {}
             for col_name, target_type_str in target_field_types.items():
                 if col_name not in tbl.column_names:
                     continue
-                arrow_type = pa.type_for_alias(target_type_str) if hasattr(pa, "type_for_alias") else None
-                # Fallback parser for standard string types
+                arrow_type = None
+                try:
+                    if hasattr(pa, "type_for_alias"):
+                        arrow_type = pa.type_for_alias(target_type_str)
+                    if arrow_type is None:
+                        arrow_type = pa.schema([(col_name, target_type_str)]).field(0).type
+                except Exception:
+                    arrow_type = None
+
                 if arrow_type is None:
-                    # Let PyArrow schema parser interpret or use schema parsing
-                    arrow_type = pa.schema([(col_name, target_type_str)]).field(0).type
+                    return EngineProbeResult(
+                        engine_name=self.name,
+                        engine_version=self.version(),
+                        operation=EngineProbeOperation.CAST,
+                        runtime_verdict=RuntimeVerdict.UNSUPPORTED,
+                        error_category="UNSUPPORTED_TYPE_MAPPING",
+                        error_message=f"Target type '{target_type_str}' for column '{col_name}' cannot be mapped to PyArrow.",
+                        tested_invariants=invariants,
+                    )
 
                 col = tbl[col_name]
                 casted_col = col.cast(arrow_type, safe=True)
@@ -145,10 +192,12 @@ class PyArrowEngineAdapter(BaseEngineAdapter):
                 engine_name=self.name,
                 engine_version=self.version(),
                 operation=EngineProbeOperation.SCHEMA_UNION,
-                runtime_verdict=RuntimeVerdict.PASS,
+                runtime_verdict=RuntimeVerdict.INCONCLUSIVE,
                 duration_ms=0.0,
-                tested_invariants=["schema_union"],
-                details={"notice": "Trivially unified single file."},
+                error_category="INSUFFICIENT_PARTITIONS",
+                error_message="Multi-partition schema union requires at least 2 files; single file skipped.",
+                tested_invariants=[],
+                details={"notice": "Single file provided; schema union inconclusive."},
             )
 
         start_time = time.perf_counter()
@@ -157,9 +206,11 @@ class PyArrowEngineAdapter(BaseEngineAdapter):
             # Test pyarrow dataset unification
             schemas = [pq.read_schema(p) for p in file_paths]
             unified_schema = pa.unify_schemas(schemas)
-            dataset = ds.dataset(file_paths, format="parquet", schema=unified_schema)
-            if row_limit > 0:
-                _ = dataset.head(row_limit)
+            _ = ds.dataset(file_paths, format="parquet", schema=unified_schema)
+            # Sample bounded rows from each file's scanner to ensure multi-file data access
+            for p in file_paths:
+                sub_ds = ds.dataset(p, format="parquet", schema=unified_schema)
+                _ = sub_ds.head(max(1, min(row_limit, 5)))
 
             dur_ms = (time.perf_counter() - start_time) * 1000.0
             return EngineProbeResult(
