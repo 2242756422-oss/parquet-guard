@@ -23,6 +23,8 @@ from parquet_guard.core.consumer import (
     ConsumerGroupSpecification,
     ConsumerImpactEvaluation,
     ConsumerImpactReport,
+    ConsumerEvolutionReport,
+    evaluate_consumer_evolution,
     evaluate_consumer_impact,
     evaluate_single_consumer,
 )
@@ -103,6 +105,8 @@ __all__ = [
     "ConsumerCompatibilityStatus",
     "ConsumerImpactEvaluation",
     "ConsumerImpactReport",
+    "ConsumerEvolutionReport",
+    "evaluate_consumer_evolution",
     "evaluate_single_consumer",
     "evaluate_consumer_impact",
     "analyze_dataset_topology",

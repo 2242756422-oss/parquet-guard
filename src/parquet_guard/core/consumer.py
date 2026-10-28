@@ -123,7 +123,7 @@ class ConsumerContract(BaseModel):
         description="Contract compatibility direction: 'BACKWARD' (default), 'FORWARD', or 'FULL'",
     )
     criticality: str = Field(
-        default="CRITICAL",
+        default="STANDARD",
         description="Consumer importance level: 'CRITICAL', 'STANDARD', or 'INFORMATIONAL'",
     )
     field_renames: Dict[str, str] = Field(
@@ -389,6 +389,26 @@ class ConsumerImpactReport(BaseModel):
         description="Matrix mapping consumer_id -> {field_name: status_code}",
     )
     summary: str = Field(description="Executive summary of downstream consumer impact")
+
+
+class ConsumerEvolutionReport(BaseModel):
+    """Evaluation report for dual-directional producer and consumer schema evolution."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    consumer_id: str = Field(description="Identifier of evaluated downstream consumer")
+    consumer_name: str = Field(description="Human name of consumer")
+    direction: str = Field(description="Evolution direction: 'BACKWARD', 'FORWARD', or 'FULL'")
+    status: ConsumerCompatibilityStatus = Field(description="Synthesized directional compatibility status")
+    is_blocking: bool = Field(description="CI blocking determination under declared criticality")
+    backward_evaluation: Optional[ConsumerImpactEvaluation] = Field(
+        default=None, description="Detailed evaluation of new consumer reading baseline producer"
+    )
+    forward_evaluation: Optional[ConsumerImpactEvaluation] = Field(
+        default=None, description="Detailed evaluation of old consumer reading target producer"
+    )
+    details: Dict[str, Any] = Field(default_factory=dict, description="Diagnostic evolution details")
+    summary: str = Field(description="Summary narrative of evolution findings")
 
 
 # ---------------------------------------------------------------------------
@@ -943,6 +963,8 @@ def evaluate_single_consumer(
     uncertain_fields: List[str] = []
     applied_renames: Dict[str, str] = {}
 
+    consumer_crit = consumer.criticality.upper()
+
     # 1. Check each declared field requirement
     for req in consumer.fields:
         target_name = consumer.field_renames.get(req.name, req.name)
@@ -958,6 +980,7 @@ def evaluate_single_consumer(
                         requirement=req,
                         violation_reason="Optional field absent in producer schema",
                         is_critical=False,
+                        is_blocking=False,
                         constraint_checks=[_check("presence", ConsumerCompatibilityStatus.COMPATIBLE)],
                     )
                 )
@@ -971,6 +994,14 @@ def evaluate_single_consumer(
             else:
                 status = ConsumerCompatibilityStatus.INCOMPATIBLE
                 path_errors.append(req.name)
+
+            if consumer_crit == "INFORMATIONAL":
+                fe_blocking = False
+            elif consumer_crit == "CRITICAL":
+                fe_blocking = status in _BLOCKING_STATUSES
+            else:
+                fe_blocking = req.critical and (status in _BLOCKING_STATUSES)
+
             field_evals.append(
                 ConsumerFieldEvaluation(
                     field_name=req.name,
@@ -978,7 +1009,7 @@ def evaluate_single_consumer(
                     requirement=req,
                     violation_reason=res.message,
                     is_critical=req.critical,
-                    is_blocking=req.critical and status in _BLOCKING_STATUSES,
+                    is_blocking=fe_blocking,
                     constraint_checks=[_check("path", status, res.message)],
                 )
             )
@@ -1010,6 +1041,14 @@ def evaluate_single_consumer(
         reasons = [
             c.reason for c in checks if c.reason and c.status != ConsumerCompatibilityStatus.COMPATIBLE
         ]
+
+        if consumer_crit == "INFORMATIONAL":
+            fe_blocking = False
+        elif consumer_crit == "CRITICAL":
+            fe_blocking = status in _BLOCKING_STATUSES
+        else:
+            fe_blocking = req.critical and (status in _BLOCKING_STATUSES)
+
         field_evals.append(
             ConsumerFieldEvaluation(
                 field_name=req.name,
@@ -1019,18 +1058,24 @@ def evaluate_single_consumer(
                 producer_nullable=res.effective_nullable,
                 violation_reason="; ".join(reasons) if reasons else None,
                 is_critical=req.critical,
-                is_blocking=req.critical and status in _BLOCKING_STATUSES,
+                is_blocking=fe_blocking,
                 constraint_checks=checks,
             )
         )
 
     # 2. Unexpected extra top-level fields (declared consumer-level requirement)
-    requested_top = {split_field_path(r.name)[0] for r in consumer.fields}
+    # Account for field_renames when determining expected top-level producer fields
+    requested_top = set()
+    for r in consumer.fields:
+        target_name = consumer.field_renames.get(r.name, r.name)
+        requested_top.add(split_field_path(target_name)[0])
+
     if not consumer.allow_extra_fields:
         for p in schema.fields:
             if p.name not in requested_top and p.name not in unexpected_extra:
                 unexpected_extra.append(p.name)
                 reason = f"Extra field '{p.name}' not permitted by consumer policy (allow_extra_fields=false)"
+                extra_blocking = False if consumer_crit == "INFORMATIONAL" else True
                 field_evals.append(
                     ConsumerFieldEvaluation(
                         field_name=p.name,
@@ -1039,7 +1084,7 @@ def evaluate_single_consumer(
                         producer_nullable=p.nullable,
                         violation_reason=reason,
                         is_critical=True,
-                        is_blocking=True,
+                        is_blocking=extra_blocking,
                         constraint_checks=[
                             _check("allow_extra_fields", ConsumerCompatibilityStatus.INCOMPATIBLE, reason)
                         ],
@@ -1051,20 +1096,22 @@ def evaluate_single_consumer(
     if consumer.strict_ordering:
         expected_order: List[str] = []
         for r in consumer.fields:
-            top = split_field_path(r.name)[0]
+            target_name = consumer.field_renames.get(r.name, r.name)
+            top = split_field_path(target_name)[0]
             if top not in expected_order and any(f.name == top for f in schema.fields):
                 expected_order.append(top)
         producer_order = [f.name for f in schema.fields if f.name in expected_order]
         if len(expected_order) > 1 and producer_order != expected_order:
             ordering_violation = True
             reason = f"Column order {producer_order} differs from declared order {expected_order}"
+            order_blocking = False if consumer_crit == "INFORMATIONAL" else True
             field_evals.append(
                 ConsumerFieldEvaluation(
                     field_name="<column_order>",
                     status=ConsumerCompatibilityStatus.INCOMPATIBLE,
                     violation_reason=reason,
                     is_critical=True,
-                    is_blocking=True,
+                    is_blocking=order_blocking,
                     constraint_checks=[
                         _check("strict_ordering", ConsumerCompatibilityStatus.INCOMPATIBLE, reason)
                     ],
@@ -1078,7 +1125,7 @@ def evaluate_single_consumer(
         fe.field_name for fe in field_evals if not fe.is_blocking and fe.status in _BLOCKING_STATUSES
     ]
     # Criticality policy: INFORMATIONAL consumers never block CI even on technical breakages
-    if consumer.criticality.upper() == "INFORMATIONAL":
+    if consumer_crit == "INFORMATIONAL":
         is_blocking = False
     else:
         is_blocking = len(blocking_fields) > 0
@@ -1231,4 +1278,101 @@ def evaluate_consumer_impact(
         impact_graph=graph,
         compatibility_matrix=matrix,
         summary=summary,
+    )
+
+
+def evaluate_consumer_evolution(
+    baseline_producer: SchemaContract,
+    target_producer: SchemaContract,
+    old_consumer: Optional[ConsumerContract] = None,
+    new_consumer: Optional[ConsumerContract] = None,
+    consumer: Optional[ConsumerContract] = None,
+    direction: Optional[str] = None,
+) -> ConsumerEvolutionReport:
+    """Evaluate schema evolution between producer versions against downstream consumer expectations.
+
+    Semantics:
+    - BACKWARD: A newer reader (new_consumer) can read older data (baseline_producer).
+      Evaluates: evaluate_single_consumer(baseline_producer, new_consumer)
+    - FORWARD: An older reader (old_consumer) can read newer data (target_producer).
+      Evaluates: evaluate_single_consumer(target_producer, old_consumer)
+    - FULL: Both BACKWARD and FORWARD directions must be satisfied simultaneously.
+
+    Args:
+        baseline_producer: Baseline/previous producer schema (e.g. v1).
+        target_producer: Target/evolved producer schema (e.g. v2).
+        old_consumer: Consumer contract for the baseline version.
+        new_consumer: Consumer contract for the target version.
+        consumer: Single consumer contract used for both versions if old/new not separated.
+        direction: Explicit direction ('BACKWARD', 'FORWARD', 'FULL'). Defaults to
+            consumer.contract_direction if provided, or 'BACKWARD'.
+    """
+    c_old = old_consumer or consumer or new_consumer
+    c_new = new_consumer or consumer or old_consumer
+
+    if c_old is None and c_new is None:
+        raise ValueError("At least one consumer contract must be provided for evolution analysis.")
+
+    active_consumer = c_new or c_old
+    assert active_consumer is not None
+
+    eval_direction = (direction or active_consumer.contract_direction or "BACKWARD").upper()
+    if eval_direction not in {"BACKWARD", "FORWARD", "FULL"}:
+        raise ValueError(
+            f"Invalid evolution direction '{eval_direction}'. Must be one of: BACKWARD, FORWARD, FULL"
+        )
+
+    backward_eval: Optional[ConsumerImpactEvaluation] = None
+    forward_eval: Optional[ConsumerImpactEvaluation] = None
+
+    if eval_direction in ("BACKWARD", "FULL"):
+        assert c_new is not None
+        backward_eval = evaluate_single_consumer(baseline_producer, c_new)
+
+    if eval_direction in ("FORWARD", "FULL"):
+        assert c_old is not None
+        forward_eval = evaluate_single_consumer(target_producer, c_old)
+
+    if eval_direction == "BACKWARD":
+        assert backward_eval is not None
+        status = backward_eval.status
+        is_blocking = backward_eval.is_blocking
+        summary = (
+            f"BACKWARD evolution evaluation for {active_consumer.consumer_name}: "
+            f"Status={status.value}, Blocking={is_blocking}. "
+            f"New consumer reading baseline producer."
+        )
+    elif eval_direction == "FORWARD":
+        assert forward_eval is not None
+        status = forward_eval.status
+        is_blocking = forward_eval.is_blocking
+        summary = (
+            f"FORWARD evolution evaluation for {active_consumer.consumer_name}: "
+            f"Status={status.value}, Blocking={is_blocking}. "
+            f"Old consumer reading target producer."
+        )
+    else:  # FULL
+        assert backward_eval is not None and forward_eval is not None
+        status = compose_statuses([backward_eval.status, forward_eval.status])
+        is_blocking = backward_eval.is_blocking or forward_eval.is_blocking
+        summary = (
+            f"FULL bidirectional evolution evaluation for {active_consumer.consumer_name}: "
+            f"Overall Status={status.value}, Blocking={is_blocking}. "
+            f"(Backward: {backward_eval.status.value}, Forward: {forward_eval.status.value})."
+        )
+
+    return ConsumerEvolutionReport(
+        consumer_id=active_consumer.consumer_id,
+        consumer_name=active_consumer.consumer_name,
+        direction=eval_direction,
+        status=status,
+        is_blocking=is_blocking,
+        backward_evaluation=backward_eval,
+        forward_evaluation=forward_eval,
+        summary=summary,
+        details={
+            "baseline_dataset": baseline_producer.name,
+            "target_dataset": target_producer.name,
+            "eval_direction": eval_direction,
+        },
     )
