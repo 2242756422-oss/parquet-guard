@@ -411,6 +411,7 @@ def test_mcp_verify_engine_compatibility(tmp_path: Path) -> None:
             "arguments": {
                 "file_path": str(pq_file),
                 "row_limit": 5,
+                "user_data_authorized": True,
             },
         },
     }

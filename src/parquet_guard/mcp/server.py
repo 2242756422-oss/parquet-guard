@@ -206,12 +206,14 @@ TOOLS_DEFINITIONS: List[Dict[str, Any]] = [
                 "row_limit": {
                     "type": "integer",
                     "default": 10,
-                    "description": "Sample row read limit for runtime probes",
+                    "minimum": 1,
+                    "maximum": 10000,
+                    "description": "Sample row read limit for runtime probes (1..10000)",
                 },
                 "user_data_authorized": {
                     "type": "boolean",
-                    "default": True,
-                    "description": "Explicit operator authorization to execute row-level engine execution probes",
+                    "default": False,
+                    "description": "Explicit operator authorization to execute row-level engine execution probes. Default is false.",
                 },
             },
             "required": ["file_path"],
@@ -448,20 +450,32 @@ class MCPServer:
                     c_data = _read_bounded_json(c_path)
                     contract_obj = SchemaContract.model_validate(c_data)
 
-                authorized = bool(arguments.get("user_data_authorized", True))
+                raw_auth = arguments.get("user_data_authorized")
+                # Strict: Only literal boolean True counts as authorization.
+                authorized = raw_auth is True
                 if not authorized:
                     raise MCPSecurityError(
                         "Explicit operator authorization (user_data_authorized=True) required to probe user data rows via MCP."
                     )
 
-                row_lim = int(arguments.get("row_limit", 10))
+                raw_row_lim = arguments.get("row_limit", 10)
+                if (
+                    isinstance(raw_row_lim, bool)
+                    or not isinstance(raw_row_lim, int)
+                    or raw_row_lim < 1
+                    or raw_row_lim > 10_000
+                ):
+                    raise MCPSecurityError(
+                        f"row_limit must be an integer between 1 and 10000, got: {raw_row_lim!r}"
+                    )
+                row_lim = raw_row_lim
+
                 verif_report = verify_engine_compatibility(
                     f_path,
                     contract=contract_obj,
                     row_limit=row_lim,
-                    scope=ValidationScope.USER_AUTHORIZED_DATA
-                    if authorized
-                    else ValidationScope.METADATA_ONLY,
+                    allow_row_probe=True,
+                    scope=ValidationScope.USER_AUTHORIZED_DATA,
                 )
                 return {
                     "content": [
