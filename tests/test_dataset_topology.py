@@ -95,7 +95,11 @@ def test_schema_grouping_and_divergence_concentration(tmp_path: Path) -> None:
     assert g1.consumer_status["strict-int64"] == ConsumerCompatibilityStatus.COMPATIBLE
 
     # G02 has id as int32, which is incompatible with strict consumer
-    g_int32 = next(g for g in topology.groups if g.schema_contract.get_field("id").type == "int32")
+    g_int32 = next(
+        g
+        for g in topology.groups
+        if (f := g.schema_contract.get_field("id")) is not None and f.type == "int32"
+    )
     assert g_int32.consumer_status["strict-int64"] == ConsumerCompatibilityStatus.INCOMPATIBLE
 
     # Divergence concentration: 'id' and 'tag' diverge across files

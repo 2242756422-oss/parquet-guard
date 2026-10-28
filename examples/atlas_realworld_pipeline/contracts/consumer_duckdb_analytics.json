@@ -1,0 +1,31 @@
+{
+  "version": "1.0",
+  "consumer_id": "duckdb-bi-analytics",
+  "consumer_name": "DuckDB Business Intelligence Warehouse",
+  "contract_direction": "BACKWARD",
+  "criticality": "CRITICAL",
+  "allow_extra_fields": true,
+  "fields": [
+    {
+      "name": "order_id",
+      "required": true,
+      "permitted_types": ["int64"],
+      "allow_null": false,
+      "critical": true
+    },
+    {
+      "name": "subtotal",
+      "required": true,
+      "permitted_types": ["decimal128(10, 2)", "decimal128(14, 4)", "decimal128(18, 4)"],
+      "allow_null": false,
+      "critical": true
+    },
+    {
+      "name": "customer.email",
+      "required": false,
+      "permitted_types": ["string"],
+      "allow_null": true,
+      "critical": false
+    }
+  ]
+}

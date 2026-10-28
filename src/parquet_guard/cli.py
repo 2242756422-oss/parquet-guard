@@ -1085,5 +1085,142 @@ def init_consumer_cmd(
         sys.exit(2)
 
 
+@main.command("verify-engine")
+@click.argument("target_path", type=click.Path(exists=True))
+@click.option(
+    "-c",
+    "--contract",
+    "contract_path",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help="Optional path to golden SchemaContract JSON file to verify against.",
+)
+@click.option(
+    "-e",
+    "--engine",
+    "engines",
+    multiple=True,
+    type=click.Choice(["pyarrow", "duckdb", "polars"]),
+    help="Target engine(s) to probe (can be repeated). Defaults to all available.",
+)
+@click.option(
+    "-s",
+    "--scope",
+    "scope",
+    type=click.Choice(["all", "read", "cast", "union"]),
+    default="all",
+    show_default=True,
+    help="Engine operations to probe.",
+)
+@click.option(
+    "-f",
+    "--format",
+    "fmt",
+    type=click.Choice(["text", "json", "markdown"]),
+    default="text",
+    show_default=True,
+    help="Report output format.",
+)
+@click.option("-o", "--output", "out_file", type=click.Path(dir_okay=False), help="Save report to file.")
+@click.option(
+    "--fail-on-disagreement/--no-fail-on-disagreement",
+    default=False,
+    show_default=True,
+    help="Fail (exit 1) if rule predicted compatibility but runtime engine failed (RULE_OPTIMISTIC disagreement).",
+)
+@click.option(
+    "--row-limit",
+    default=10,
+    show_default=True,
+    type=int,
+    help="Row sample limit for engine execution probes.",
+)
+@click.option(
+    "--max-total-rows",
+    default=None,
+    type=int,
+    help="Maximum aggregate row budget across all engines and operations.",
+)
+@click.option(
+    "--allow-row-probe/--no-allow-row-probe",
+    default=False,
+    show_default=True,
+    help="Explicitly authorize engines to probe and read sample row data from disk.",
+)
+def verify_engine_cmd(
+    target_path: str,
+    contract_path: Optional[str],
+    engines: tuple[str, ...],
+    scope: str,
+    fmt: str,
+    out_file: Optional[str],
+    fail_on_disagreement: bool,
+    row_limit: int,
+    max_total_rows: Optional[int],
+    allow_row_probe: bool,
+) -> None:
+    """Probe and verify runtime query engine compatibility (PyArrow, DuckDB, Polars)."""
+    try:
+        from parquet_guard.verification import (
+            EngineProbeOperation,
+            format_engine_verification_json,
+            format_engine_verification_markdown,
+            format_engine_verification_terminal,
+            verify_engine_compatibility,
+        )
+
+        contract_obj = None
+        if contract_path:
+            contract_obj = load_contract(contract_path)
+
+        ops = None
+        if scope == "read":
+            ops = [EngineProbeOperation.READ]
+        elif scope == "cast":
+            ops = [EngineProbeOperation.CAST]
+        elif scope == "union":
+            ops = [EngineProbeOperation.SCHEMA_UNION]
+
+        eng_list = list(engines) if engines else None
+
+        report = verify_engine_compatibility(
+            files=target_path,
+            contract=contract_obj,
+            engines=eng_list,
+            operations=ops,
+            row_limit=row_limit,
+            max_total_rows=max_total_rows,
+            allow_row_probe=allow_row_probe,
+        )
+
+        if fmt == "json":
+            output_str = format_engine_verification_json(report)
+        elif fmt == "markdown":
+            output_str = format_engine_verification_markdown(report)
+        else:
+            output_str = format_engine_verification_terminal(report)
+
+        if out_file:
+            Path(out_file).write_text(output_str, encoding="utf-8")
+            click.echo(f"Engine verification report written to '{out_file}'.")
+        else:
+            click.echo(output_str)
+
+        # Exit code determination according to contract:
+        # Exit 0 ONLY if overall_compatible is True (metadata safe AND executed runtime probes passed).
+        # Exit 1 if overall_compatible is False (metadata incompatible, runtime failed, errored, inconclusive, or unsupported).
+        if not report.overall_compatible:
+            sys.exit(1)
+
+        if fail_on_disagreement and report.has_rule_optimistic_disagreement:
+            sys.exit(1)
+
+        sys.exit(0)
+
+    except Exception as exc:
+        click.secho(f"Error executing engine verification: {exc}", fg="red", err=True)
+        sys.exit(2)
+
+
 if __name__ == "__main__":
     main()

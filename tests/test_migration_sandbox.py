@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import pyarrow as pa
+import pyarrow.parquet as pq
+import pytest
+
 from parquet_guard.core.consumer import (
     ConsumerCompatibilityStatus,
     ConsumerContract,
@@ -515,3 +521,47 @@ def test_p0_b_negative_missing_business_semantics() -> None:
     assert res.readiness_status == MigrationReadinessStatus.UNCERTAIN_SEMANTICS
     assert res.deployment_ready is False
     assert res.success is False
+
+
+def test_migration_mode2_user_sample_data_requires_authorization(tmp_path: Path) -> None:
+    """Verify Mode 2 (user sample data) enforces authorization and leaves original file untouched."""
+    p_orig = tmp_path / "orders_sample.parquet"
+    tbl_orig = pa.table(
+        {
+            "order_id": pa.array([101, 102], type=pa.int64()),
+            "status": pa.array(["shipped", "pending"], type=pa.string()),
+        }
+    )
+    pq.write_table(tbl_orig, p_orig)
+    orig_bytes = p_orig.read_bytes()
+
+    contract = SchemaContract(
+        name="orders_schema",
+        fields=[
+            FieldDefinition(name="order_id", type="int64", nullable=True),
+            FieldDefinition(name="status", type="string", nullable=True),
+        ],
+    )
+    plan = ExecutableMigrationPlan(
+        plan_id="MIG-SAMPLE-TEST",
+        title="Sample verification",
+        description="Verify sample data",
+        source_contract=contract,
+        target_contract=contract,
+        operations=[],
+    )
+
+    # 1. Without authorization: raises PermissionError
+    with pytest.raises(PermissionError, match="authorization"):
+        verify_migration_plan(plan, sample_file=str(p_orig), user_data_authorized=False)
+
+    # 2. With authorization: verifies Mode 2 and records audit disclosures
+    res = verify_migration_plan(plan, sample_file=str(p_orig), user_data_authorized=True)
+    assert res.success is True
+    assert res.validation_mode == "user_sample"
+    assert res.data_rows_read == 2
+    assert res.user_data_authorized is True
+    assert "sandbox" in res.privacy_statement.lower()
+
+    # 3. Invariant: Original sample file is 100% byte-for-byte identical (unmutated!)
+    assert p_orig.read_bytes() == orig_bytes

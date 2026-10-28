@@ -11,8 +11,10 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from parquet_guard.core.cache import (
     CachedFileInfo,
     DatasetAuditCache,
+    compute_footer_checksum,
     load_audit_cache,
     save_audit_cache,
+    verify_cached_file_identity,
 )
 from parquet_guard.core.compatibility import compare_schemas
 from parquet_guard.core.inspector import extract_file_metadata, inspect_schema
@@ -104,6 +106,7 @@ def audit_dataset(
     incremental: bool = False,
     cache_path: Optional[Union[str, Path]] = None,
     force_full: bool = False,
+    require_content_hash: bool = False,
 ) -> PartitionAuditResult:
     """Scan and audit a collection of Parquet files or partitioned directory tree.
 
@@ -118,6 +121,7 @@ def audit_dataset(
         incremental: Whether to enable local-filesystem caching for unchanged partition files.
         cache_path: Optional custom path for the audit cache manifest JSON file.
         force_full: When True, ignores existing cache and forces full metadata re-audit.
+        require_content_hash: When True, enforces cryptographic footer SHA-256 validation (HIGH_RELIABLE).
 
     Returns:
         PartitionAuditResult containing global consistency status and per-file inspection details.
@@ -207,7 +211,10 @@ def audit_dataset(
 
         if cached_candidate is not None and stat:
             cached = cached_candidate
-            if cached.file_size_bytes == stat.st_size and cached.mtime_ns == stat.st_mtime_ns:
+            is_valid, _reason = verify_cached_file_identity(
+                file_path, cached, require_hash=require_content_hash
+            )
+            if is_valid:
                 # Cache HIT!
                 cache_hits += 1
                 total_rows += cached.row_count
@@ -288,6 +295,8 @@ def audit_dataset(
             contract = inspect_schema(file_path)
             total_rows += meta["num_rows"]
             total_bytes += meta["file_size_bytes"]
+            footer_hash = compute_footer_checksum(file_path)
+            confidence = "HIGH_RELIABLE" if footer_hash else "HEURISTIC"
 
             # Check for duplicate column names in file
             if contract.has_duplicate_fields():
@@ -314,6 +323,8 @@ def audit_dataset(
                         row_groups=meta["num_row_groups"],
                         column_count=meta["num_columns"],
                         schema_fingerprint="DUPLICATE_COLUMNS",
+                        content_hash=footer_hash,
+                        cache_confidence=confidence,
                         is_corrupted=False,
                         has_duplicate_columns=True,
                         error_message=reason,
@@ -347,6 +358,8 @@ def audit_dataset(
                     row_groups=meta["num_row_groups"],
                     column_count=meta["num_columns"],
                     schema_fingerprint=fp,
+                    content_hash=footer_hash,
+                    cache_confidence=confidence,
                     is_corrupted=False,
                     has_duplicate_columns=False,
                 )
@@ -374,6 +387,8 @@ def audit_dataset(
                     row_groups=0,
                     column_count=0,
                     schema_fingerprint="CORRUPTED",
+                    content_hash=compute_footer_checksum(file_path),
+                    cache_confidence="HIGH_RELIABLE",
                     is_corrupted=True,
                     has_duplicate_columns=False,
                     error_message=err_reason,

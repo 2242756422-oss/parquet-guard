@@ -7,9 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Planned
-- Native GitHub Action wrapper (`2242756422-oss/parquet-guard-action`).
-- Remote cloud storage streaming footer audit (AWS S3, Google Cloud Storage, Azure Blob).
+### Added
+- **Project Atlas — Empirical Query Engine Verification (`parquet_guard.verification`)**:
+  - Direct execution probes across real query engines: `PyArrowEngineAdapter`, `DuckDBEngineAdapter`, and `PolarsEngineAdapter`.
+  - Probes for bounded file reads (`probe_read`), target schema type casting (`probe_cast`), and multi-partition schema unions (`probe_schema_union`).
+  - Deterministic disagreement classification matrix (`classify_disagreement`):
+    - `RULE_OPTIMISTIC`: static rules permitted evolution, but runtime engine failed (CI hazard flagged by `--fail-on-disagreement`).
+    - `RULE_CONSERVATIVE`: static rules predicted breaking divergence, but runtime engine tolerated widening.
+    - `AGREEMENT` and `INCONCLUSIVE`.
+  - New CLI command: `parquet-guard verify-engine` with `--engine`, `--scope`, `--format`, and `--fail-on-disagreement` flags.
+  - Developer Pytest integration plugin (`parquet_guard.testing.pytest_plugin`): `assert_schema_compatible`, `assert_engine_verified`, and `parquet_guard` fixture.
+  - MCP tool extension: exposed `verify_engine_compatibility` in stdio MCP server for agentic IDE workflows.
+- **Consumer Contracts 2.0 (`parquet_guard.core.consumer`)**:
+  - `contract_direction`: declarative compatibility direction (`BACKWARD`, `FORWARD`, `FULL`).
+  - `criticality`: independent downstream importance level (`CRITICAL`, `STANDARD`, `INFORMATIONAL`) separating technical divergence from CI-blocking decisions.
+  - Explicit field renames (`field_renames: Dict[str, str]`): deterministic mapping of legacy consumer field paths to upstream producer names without heuristic guessing.
+- **Incremental Cache Hardening & Storage Abstraction (`parquet_guard.core.cache`, `parquet_guard.storage`)**:
+  - Cryptographic footer SHA-256 checksumming (`compute_footer_checksum`): O(1) tail region I/O independent of row count.
+  - Cache confidence levels: `HEURISTIC` (size/mtime) vs `HIGH_RELIABLE` (footer checksum / object storage ETag).
+  - Unified storage abstraction (`StorageBackend`, `LocalStorageBackend`, `MemoryStorageBackend`, `RemoteStorageBackend`, `resolve_backend`) with optional `fsspec` cloud integration.
+- **Sandboxed Migration Assurance 2.0 (`parquet_guard.core.migration_verifier`)**:
+  - Mode 1 (Synthetic) boundary test generation vs Mode 2 (User Sample) testing.
+  - Privacy guard: mandatory explicit user authorization (`user_data_authorized=True`) raising `PermissionError` when unauthorized user sample files are passed.
+- **Evaluation Corpus, Adversarial Testing, and Fair Benchmarks**:
+  - 9 real-world schema drift test fixtures (`tests/corpus/generate_corpus.py`): integer widening/narrowing, decimal scale shift, temporal unit overflow, nested struct field drop, nullability relaxation, vector dimension mismatch, corrupted magic bytes, and adversarial SQL injection identifiers.
+  - Adversarial & property-based testing (`tests/test_security_adversarial.py`): Hypothesis testing on SchemaContract JSON roundtrips, SQL identifier quoting fuzzing, and corrupted footer handling.
+  - Fair statistical benchmark (`benchmarks/benchmark_atlas_fair.py`): measures latency dispersion (mean, median, p95, std dev) across metadata inspection (0.07 ms) and engine probes.
+  - End-to-end runnable demonstration (`examples/atlas_realworld_pipeline/`).
+
+### Fixed
+- **Migration Schema Comparison Attribute**: Fixed `ChangeType.FIELD_ORDER_CHANGED` check and `ch.description` reference in `_validate_output_schema_against_target`.
+- **API Parameter Flexibility**: Added `contract` and `files` keyword argument aliases in `verify_engine_compatibility`.
 
 ## [0.4.0a1] - 2026-10-26
 

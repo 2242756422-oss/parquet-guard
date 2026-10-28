@@ -333,7 +333,7 @@ def test_mcp_real_subprocess_stdio_roundtrip(tmp_path: Path) -> None:
         # 3. tools/list
         r_list = send_and_recv(json.dumps({"jsonrpc": "2.0", "id": 3, "method": "tools/list"}))
         assert r_list["id"] == 3
-        assert len(r_list["result"]["tools"]) == 7
+        assert len(r_list["result"]["tools"]) == 8
 
         # 4. tools/call inspect_schema
         r_call = send_and_recv(
@@ -392,3 +392,34 @@ def test_mcp_real_subprocess_stdio_roundtrip(tmp_path: Path) -> None:
         proc.stdin.close()
         proc.wait(timeout=5)
     assert proc.returncode == 0
+
+
+def test_mcp_verify_engine_compatibility(tmp_path: Path) -> None:
+    """Test verify_engine_compatibility tool execution over MCP server."""
+    import json
+
+    pq_file = tmp_path / "test.parquet"
+    _create_sample_parquet(pq_file)
+
+    server = MCPServer(allowed_dirs=[str(tmp_path)])
+    call_msg = {
+        "jsonrpc": "2.0",
+        "id": 10,
+        "method": "tools/call",
+        "params": {
+            "name": "verify_engine_compatibility",
+            "arguments": {
+                "file_path": str(pq_file),
+                "row_limit": 5,
+                "user_data_authorized": True,
+            },
+        },
+    }
+    resp = server.process_message(call_msg)
+    assert resp is not None
+    assert resp.get("error") is None
+    result = resp.get("result", {})
+    assert result.get("isError") is not True
+    content_text = result["content"][0]["text"]
+    data = json.loads(content_text)
+    assert data["runtime_verdict"] == "PASS"

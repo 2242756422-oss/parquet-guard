@@ -1,0 +1,53 @@
+{
+  "version": "1.0",
+  "name": "ecommerce-orders-v1",
+  "fields": [
+    {
+      "name": "order_id",
+      "type": "int64",
+      "nullable": false
+    },
+    {
+      "name": "subtotal",
+      "type": "decimal128(10, 2)",
+      "nullable": false,
+      "precision": 10,
+      "scale": 2
+    },
+    {
+      "name": "tax",
+      "type": "decimal128(10, 2)",
+      "nullable": false,
+      "precision": 10,
+      "scale": 2
+    },
+    {
+      "name": "created_at",
+      "type": "timestamp[ms, tz=UTC]",
+      "nullable": false,
+      "time_unit": "ms",
+      "timezone": "UTC"
+    },
+    {
+      "name": "customer",
+      "type": "struct<name: string not null, email: string>",
+      "nullable": false,
+      "children": [
+        {
+          "name": "name",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "email",
+          "type": "string",
+          "nullable": true
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "domain": "commerce",
+    "tier": "tier-1-critical"
+  }
+}
