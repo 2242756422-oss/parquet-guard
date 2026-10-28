@@ -193,7 +193,7 @@ Parquet file containing string column with `'not_a_number'` cast to `int32` exec
 ```bash
 # Pytest Suite:
 $ ./.venv/bin/pytest -q
-233 passed in 8.67s
+251 passed in 7.32s
 
 # Ruff Linter:
 $ ./.venv/bin/ruff check .
@@ -201,16 +201,34 @@ All checks passed!
 
 # Ruff Formatter:
 $ ./.venv/bin/ruff format --check .
-117 files already formatted
+119 files already formatted
 
 # Mypy Static Type Checker:
 $ ./.venv/bin/mypy src/parquet_guard
 Success: no issues found in 35 source files
+
+# Distribution Build & Twine Check:
+$ uv build && twine check --strict dist/*
+Checking dist/parquet_guard-0.4.0a1-py3-none-any.whl: PASSED
+Checking dist/parquet_guard-0.4.0a1.tar.gz: PASSED
 ```
 
 ---
 
-## 5. Release Verdict & Maintainer Recommendations
+## 5. Final Adversarial Hardening (QA-B01 through QA-B18)
+
+A second, rigorous adversarial reliability pass addressed remaining subtle boundary conditions:
+1. **MCP Strict Default-Deny (QA-B01 - QA-B05):** `user_data_authorized` defaults strictly to `False`. Omitted, non-boolean (`"false"`, `"true"`, `1`, `None`), or unauthorized calls fail closed with verified zero data row decoding calls.
+2. **Unified Capability Gate (QA-B06 - QA-B07):** Both Python API (`allow_row_probe=False`) and CLI (`--allow-row-probe`) require explicit authorization for row data access, failing closed when unauthorized.
+3. **Multi-Engine Aggregation (QA-B08 - QA-B14):** Explicitly empty engines/operations or unsupported requested engines fail overall compatibility; single-file union and missing CAST targets report `INCONCLUSIVE`.
+4. **Bounded Row Sampling (QA-B15):** Strictly validated positive integer $1 \le \text{row\_limit} \le 10,000$ across all layers; prevents infinite streaming loops or unbounded allocations.
+5. **Consumer Evolution Directionality (QA-B16):** Implemented `evaluate_consumer_evolution()` to rigorously test `BACKWARD`, `FORWARD`, and `FULL` bidirectional schema evolution with distinct outcomes.
+6. **Criticality Consistency (QA-B17):** Reconciled `INFORMATIONAL` (never blocks, zero blocking fields), `STANDARD` (blocks on critical violations), and `CRITICAL` (blocks on all violations); properly mapped renamed fields in extra-field and ordering checks.
+7. **Disagreement Classifications (QA-B18):** Low-level execution `ERROR` classifications map to `INCONCLUSIVE`, preventing technical failures from masquerading as `AGREEMENT`.
+
+---
+
+## 6. Release Verdict & Maintainer Recommendations
 
 ### Verdict: READY FOR MAINTAINER REVIEW ON PR #6
 
