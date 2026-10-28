@@ -24,6 +24,44 @@ def validate_row_limit(row_limit: Any, min_val: int = 1, max_val: int = 10_000) 
     return row_limit
 
 
+def validate_total_row_budget(budget: Any) -> Optional[int]:
+    """Validate optional total row budget."""
+    if budget is None:
+        return None
+    if isinstance(budget, bool) or not isinstance(budget, int):
+        raise ValueError(f"max_total_rows must be an integer, got {type(budget).__name__}: {budget!r}")
+    if budget < 1:
+        raise ValueError(f"max_total_rows must be >= 1, got {budget}")
+    return budget
+
+
+class RowProbeBudget:
+    """Invocation-scoped budget tracking logical row probes across engines and operations."""
+
+    def __init__(self, max_total_rows: int, row_limit_per_probe: int) -> None:
+        self.max_total_rows = max_total_rows
+        self.row_limit_per_probe = row_limit_per_probe
+        self.consumed_rows = 0
+
+    @property
+    def remaining(self) -> int:
+        return max(0, self.max_total_rows - self.consumed_rows)
+
+    @property
+    def is_exhausted(self) -> bool:
+        return self.remaining <= 0
+
+    def allocate(self, requested: int) -> int:
+        """Allocate up to `requested` rows from remaining budget."""
+        if self.is_exhausted:
+            return 0
+        return min(requested, self.remaining)
+
+    def record_consumed(self, count: int) -> None:
+        """Record logical rows returned or consumed."""
+        self.consumed_rows += max(0, count)
+
+
 def quote_sql_identifier(identifier: str) -> str:
     """Safely escape and double-quote a SQL identifier preventing SQL injection.
 

@@ -114,6 +114,26 @@ class PolarsEngineAdapter(BaseEngineAdapter):
         row_limit = validate_row_limit(row_limit)
         start_time = time.perf_counter()
         invariants = ["polars_strict_cast"]
+
+        if not target_field_types:
+            return EngineProbeResult(
+                engine_name=self.name,
+                engine_version=self.version(),
+                operation=EngineProbeOperation.CAST,
+                runtime_verdict=RuntimeVerdict.INCONCLUSIVE,
+                duration_ms=0.0,
+                error_category="EMPTY_TARGET_TYPES",
+                error_message="No target field types provided for CAST probe.",
+                tested_invariants=[],
+                details={
+                    "requested_cast_fields": [],
+                    "attempted_cast_fields": [],
+                    "successful_cast_fields": [],
+                    "failed_or_skipped_cast_fields": [],
+                },
+            )
+
+        requested_fields = list(target_field_types.keys())
         try:
             # Bounded streaming read via lazy frame scanning
             lf = pl.scan_parquet(file_path)
@@ -121,26 +141,73 @@ class PolarsEngineAdapter(BaseEngineAdapter):
                 lf = lf.limit(row_limit)
             df = lf.collect()
 
-            cast_exprs = []
-            for col, target_type in target_field_types.items():
-                if col in df.columns:
-                    pl_type = self._map_to_polars_type(target_type)
-                    if pl_type is None:
-                        return EngineProbeResult(
-                            engine_name=self.name,
-                            engine_version=self.version(),
-                            operation=EngineProbeOperation.CAST,
-                            runtime_verdict=RuntimeVerdict.UNSUPPORTED,
-                            error_category="UNSUPPORTED_TYPE_MAPPING",
-                            error_message=f"Target type '{target_type}' for column '{col}' cannot be mapped to Polars.",
-                            tested_invariants=invariants,
-                        )
-                    cast_exprs.append(pl.col(col).cast(pl_type, strict=True))
+            # Fail closed on missing source columns
+            missing_fields = [c for c in requested_fields if c not in df.columns]
+            if missing_fields:
+                dur_ms = (time.perf_counter() - start_time) * 1000.0
+                return EngineProbeResult(
+                    engine_name=self.name,
+                    engine_version=self.version(),
+                    operation=EngineProbeOperation.CAST,
+                    runtime_verdict=RuntimeVerdict.FAIL,
+                    duration_ms=dur_ms,
+                    error_category="MISSING_TARGET_COLUMNS",
+                    error_message=f"Requested target column(s) absent from source Parquet file: {missing_fields}",
+                    tested_invariants=invariants,
+                    details={
+                        "requested_cast_fields": requested_fields,
+                        "attempted_cast_fields": [c for c in requested_fields if c in df.columns],
+                        "successful_cast_fields": [],
+                        "failed_or_skipped_cast_fields": missing_fields,
+                    },
+                )
 
-            if cast_exprs:
-                df = df.with_columns(cast_exprs)
+            is_empty = len(df) == 0
+            if is_empty:
+                invariants = ["polars_strict_cast", "empty_dataset_schema_cast"]
+
+            cast_exprs = []
+            attempted_fields: List[str] = []
+            for col, target_type in target_field_types.items():
+                pl_type = self._map_to_polars_type(target_type)
+                if pl_type is None:
+                    dur_ms = (time.perf_counter() - start_time) * 1000.0
+                    return EngineProbeResult(
+                        engine_name=self.name,
+                        engine_version=self.version(),
+                        operation=EngineProbeOperation.CAST,
+                        runtime_verdict=RuntimeVerdict.UNSUPPORTED,
+                        duration_ms=dur_ms,
+                        error_category="UNSUPPORTED_TYPE_MAPPING",
+                        error_message=f"Target type '{target_type}' for column '{col}' cannot be mapped to Polars.",
+                        tested_invariants=invariants,
+                        details={
+                            "requested_cast_fields": requested_fields,
+                            "attempted_cast_fields": attempted_fields + [col],
+                            "successful_cast_fields": attempted_fields,
+                            "failed_or_skipped_cast_fields": [col],
+                        },
+                    )
+                cast_exprs.append(pl.col(col).cast(pl_type, strict=True))
+                attempted_fields.append(col)
+
+            df = df.with_columns(cast_exprs)
 
             dur_ms = (time.perf_counter() - start_time) * 1000.0
+            details_dict: Dict[str, Any] = {
+                "requested_cast_fields": requested_fields,
+                "attempted_cast_fields": requested_fields,
+                "successful_cast_fields": requested_fields,
+                "failed_or_skipped_cast_fields": [],
+                "casted_columns_count": len(cast_exprs),
+                "rows_sampled": len(df),
+            }
+            if is_empty:
+                details_dict["empty_dataset"] = True
+                details_dict["notice"] = (
+                    "Empty dataset: validated schema-level castability without data values."
+                )
+
             return EngineProbeResult(
                 engine_name=self.name,
                 engine_version=self.version(),
@@ -148,7 +215,7 @@ class PolarsEngineAdapter(BaseEngineAdapter):
                 runtime_verdict=RuntimeVerdict.PASS,
                 duration_ms=dur_ms,
                 tested_invariants=invariants,
-                details={"casted_columns_count": len(cast_exprs)},
+                details=details_dict,
             )
         except Exception as exc:
             dur_ms = (time.perf_counter() - start_time) * 1000.0
@@ -162,6 +229,12 @@ class PolarsEngineAdapter(BaseEngineAdapter):
                 error_category=cat,
                 error_message=msg,
                 tested_invariants=invariants,
+                details={
+                    "requested_cast_fields": requested_fields,
+                    "attempted_cast_fields": requested_fields,
+                    "successful_cast_fields": [],
+                    "failed_or_skipped_cast_fields": requested_fields,
+                },
             )
 
     def probe_schema_union(
@@ -182,28 +255,69 @@ class PolarsEngineAdapter(BaseEngineAdapter):
                 error_category="INSUFFICIENT_PARTITIONS",
                 error_message="Multi-partition schema union requires at least 2 files; single file skipped.",
                 tested_invariants=[],
-                details={"notice": "Single file provided; schema union inconclusive."},
+                details={
+                    "files_requested": len(file_paths),
+                    "files_metadata_inspected": len(file_paths),
+                    "files_row_probed": 0,
+                    "files_skipped": len(file_paths),
+                    "coverage_complete": False,
+                    "coverage_limitations": ["Single file provided; schema union inconclusive."],
+                },
             )
 
         row_limit = validate_row_limit(row_limit)
         start_time = time.perf_counter()
         invariants = ["polars_multi_file_union", "partition_schema_alignment"]
+        files_row_probed = 0
+        total_rows = 0
         try:
-            # Polars supports multi-file scan_parquet directly
+            # 1. Global multi-file scan
             lf = pl.scan_parquet(file_paths)
             if row_limit > 0:
                 lf = lf.limit(row_limit)
             df = lf.collect()
+            total_rows += len(df)
+
+            # 2. Per-partition validation under unified scan
+            per_file_lim = max(1, min(row_limit, 5))
+            try:
+                lf_parts = pl.scan_parquet(file_paths, include_file_paths="__file_path__")
+                has_file_col = True
+            except Exception:
+                has_file_col = False
+
+            for p in file_paths:
+                if has_file_col:
+                    p_df = lf_parts.filter(pl.col("__file_path__") == p).limit(per_file_lim).collect()
+                else:
+                    p_df = pl.scan_parquet(p).limit(per_file_lim).collect()
+                files_row_probed += 1
+                total_rows += len(p_df)
 
             dur_ms = (time.perf_counter() - start_time) * 1000.0
+            coverage_complete = files_row_probed == len(file_paths)
+            coverage_limitations = (
+                []
+                if coverage_complete
+                else [f"Sampled row probing covered {files_row_probed}/{len(file_paths)} partition files."]
+            )
             return EngineProbeResult(
                 engine_name=self.name,
                 engine_version=self.version(),
                 operation=EngineProbeOperation.SCHEMA_UNION,
-                runtime_verdict=RuntimeVerdict.PASS,
+                runtime_verdict=RuntimeVerdict.PASS if coverage_complete else RuntimeVerdict.INCONCLUSIVE,
                 duration_ms=dur_ms,
                 tested_invariants=invariants,
-                details={"files_unified": len(file_paths), "rows_sampled": len(df)},
+                details={
+                    "files_requested": len(file_paths),
+                    "files_metadata_inspected": len(file_paths),
+                    "files_row_probed": files_row_probed,
+                    "files_skipped": len(file_paths) - files_row_probed,
+                    "coverage_complete": coverage_complete,
+                    "coverage_limitations": coverage_limitations,
+                    "files_unified": len(file_paths),
+                    "rows_sampled": total_rows,
+                },
             )
         except Exception as exc:
             dur_ms = (time.perf_counter() - start_time) * 1000.0
@@ -217,7 +331,15 @@ class PolarsEngineAdapter(BaseEngineAdapter):
                 error_category=cat,
                 error_message=msg,
                 tested_invariants=invariants,
-                details={"files_count": len(file_paths)},
+                details={
+                    "files_requested": len(file_paths),
+                    "files_metadata_inspected": len(file_paths),
+                    "files_row_probed": files_row_probed,
+                    "files_skipped": len(file_paths) - files_row_probed,
+                    "coverage_complete": False,
+                    "coverage_limitations": [f"Failure during union probing: {msg}"],
+                    "files_count": len(file_paths),
+                },
             )
 
     @staticmethod

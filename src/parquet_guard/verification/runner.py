@@ -9,7 +9,12 @@ from typing import Dict, List, Optional, Sequence, Union
 
 from parquet_guard.core.inspector import inspect_schema
 from parquet_guard.core.models import SchemaContract
-from parquet_guard.verification.adapters import BaseEngineAdapter, validate_row_limit
+from parquet_guard.verification.adapters import (
+    BaseEngineAdapter,
+    RowProbeBudget,
+    validate_row_limit,
+    validate_total_row_budget,
+)
 from parquet_guard.verification.duckdb_engine import DuckDBEngineAdapter
 from parquet_guard.verification.models import (
     DisagreementClassification,
@@ -104,12 +109,17 @@ def verify_engine_compatibility(
     files: Optional[Union[str, Path, Sequence[Union[str, Path]]]] = None,
     contract: Optional[SchemaContract] = None,
     allow_row_probe: bool = False,
+    max_total_rows: Optional[int] = None,
 ) -> EngineVerificationReport:
     """Execute real query engine verification probes across PyArrow, DuckDB, and Polars.
 
     Separates deterministic metadata findings from runtime execution observations,
     detecting any rule-vs-runtime disagreements without leaking raw row data.
     """
+    # P0 Security gate: allow_row_probe must strictly be an explicit boolean
+    if type(allow_row_probe) is not bool:
+        raise TypeError("allow_row_probe must be an explicit boolean")
+
     raw_target = target if target is not None else files
     if raw_target is None:
         raise ValueError("Either 'target' or 'files' must be provided.")
@@ -121,8 +131,13 @@ def verify_engine_compatibility(
         str(raw_target) if not isinstance(raw_target, (list, tuple)) else f"{len(raw_target)} files"
     )
 
-    # Validate row_limit before accessing data
+    # Validate row_limit and total budget before accessing data
     validated_row_limit = validate_row_limit(row_limit)
+    validated_total_budget = validate_total_row_budget(max_total_rows)
+    effective_budget_limit = validated_total_budget if validated_total_budget is not None else 10_000
+    row_budget = RowProbeBudget(
+        max_total_rows=effective_budget_limit, row_limit_per_probe=validated_row_limit
+    )
 
     report = EngineVerificationReport(
         target_path=target_display,
@@ -134,6 +149,10 @@ def verify_engine_compatibility(
         finding_ids=[],
         tested_invariants=[],
         limitations=[],
+        coverage_complete=True,
+        coverage_limitations=[],
+        total_rows_budget=validated_total_budget,
+        total_rows_probed=0,
     )
 
     if not resolved_files:
@@ -269,69 +288,122 @@ def verify_engine_compatibility(
 
         # Execute READ probe
         if EngineProbeOperation.READ in probed_operations:
-            read_res = adapter.probe_read(
-                resolved_files, expected_columns=expected_cols, row_limit=validated_row_limit
-            )
-            report.engine_results.append(read_res)
-            all_runtime_verdicts.append(read_res.runtime_verdict)
-            report.tested_invariants.extend(read_res.tested_invariants)
-            if EngineProbeOperation.READ not in executed_ops:
-                executed_ops.append(EngineProbeOperation.READ)
+            if row_budget.is_exhausted:
+                budget_res = EngineProbeResult(
+                    engine_name=eng_name,
+                    engine_version=adapter.version(),
+                    operation=EngineProbeOperation.READ,
+                    runtime_verdict=RuntimeVerdict.NOT_RUN,
+                    duration_ms=0.0,
+                    error_category="ROW_BUDGET_EXHAUSTED",
+                    error_message=f"Row probe budget exhausted ({row_budget.consumed_rows}/{row_budget.max_total_rows} rows consumed).",
+                    tested_invariants=[],
+                    details={
+                        "budget_exhausted": True,
+                        "max_total_rows": row_budget.max_total_rows,
+                        "consumed_rows": row_budget.consumed_rows,
+                    },
+                )
+                report.engine_results.append(budget_res)
+                all_runtime_verdicts.append(budget_res.runtime_verdict)
+                report.limitations.append(
+                    f"Engine probe for {eng_name} READ was NOT_RUN due to aggregate row budget exhaustion."
+                )
+            else:
+                effective_limit = row_budget.allocate(validated_row_limit)
+                read_res = adapter.probe_read(
+                    resolved_files, expected_columns=expected_cols, row_limit=effective_limit
+                )
+                rows_read = read_res.details.get("rows_sampled", effective_limit)
+                row_budget.record_consumed(rows_read)
+                report.engine_results.append(read_res)
+                all_runtime_verdicts.append(read_res.runtime_verdict)
+                report.tested_invariants.extend(read_res.tested_invariants)
+                if EngineProbeOperation.READ not in executed_ops:
+                    executed_ops.append(EngineProbeOperation.READ)
 
-            # Check Disagreement for Read
-            diag = classify_disagreement(report.metadata_verdict, read_res.runtime_verdict)
-            if (
-                diag != DisagreementClassification.AGREEMENT
-                and diag != DisagreementClassification.INCONCLUSIVE
-            ):
-                explanation = (
-                    f"Engine {eng_name} yielded {read_res.runtime_verdict.value} for READ "
-                    f"while static rules predicted {report.metadata_verdict.value}."
-                )
-                if read_res.error_message:
-                    explanation += f" Reason: {read_res.error_message}"
-                report.disagreements.append(
-                    RuleVsRuntimeDisagreement(
-                        engine_name=eng_name,
-                        operation=EngineProbeOperation.READ,
-                        rule_predicted_verdict=report.metadata_verdict,
-                        runtime_verdict=read_res.runtime_verdict,
-                        classification=diag,
-                        explanation=explanation,
-                        remediation_advice=(
-                            "Review engine-specific casting behavior"
-                            if diag == DisagreementClassification.RULE_OPTIMISTIC
-                            else "Rule flagged potential break, but engine successfully tolerated widening."
-                        ),
+                # Check Disagreement for Read
+                diag = classify_disagreement(report.metadata_verdict, read_res.runtime_verdict)
+                if (
+                    diag != DisagreementClassification.AGREEMENT
+                    and diag != DisagreementClassification.INCONCLUSIVE
+                ):
+                    explanation = (
+                        f"Engine {eng_name} yielded {read_res.runtime_verdict.value} for READ "
+                        f"while static rules predicted {report.metadata_verdict.value}."
                     )
-                )
+                    if read_res.error_message:
+                        explanation += f" Reason: {read_res.error_message}"
+                    report.disagreements.append(
+                        RuleVsRuntimeDisagreement(
+                            engine_name=eng_name,
+                            operation=EngineProbeOperation.READ,
+                            rule_predicted_verdict=report.metadata_verdict,
+                            runtime_verdict=read_res.runtime_verdict,
+                            classification=diag,
+                            explanation=explanation,
+                            remediation_advice=(
+                                "Review engine-specific casting behavior"
+                                if diag == DisagreementClassification.RULE_OPTIMISTIC
+                                else "Rule flagged potential break, but engine successfully tolerated widening."
+                            ),
+                        )
+                    )
 
         # Execute SCHEMA_UNION probe
         if EngineProbeOperation.SCHEMA_UNION in probed_operations:
             if len(resolved_files) > 1:
-                union_res = adapter.probe_schema_union(resolved_files, row_limit=validated_row_limit)
-                report.engine_results.append(union_res)
-                all_runtime_verdicts.append(union_res.runtime_verdict)
-                report.tested_invariants.extend(union_res.tested_invariants)
-                if EngineProbeOperation.SCHEMA_UNION not in executed_ops:
-                    executed_ops.append(EngineProbeOperation.SCHEMA_UNION)
-
-                diag_union = classify_disagreement(report.metadata_verdict, union_res.runtime_verdict)
-                if (
-                    diag_union != DisagreementClassification.AGREEMENT
-                    and diag_union != DisagreementClassification.INCONCLUSIVE
-                ):
-                    report.disagreements.append(
-                        RuleVsRuntimeDisagreement(
-                            engine_name=eng_name,
-                            operation=EngineProbeOperation.SCHEMA_UNION,
-                            rule_predicted_verdict=report.metadata_verdict,
-                            runtime_verdict=union_res.runtime_verdict,
-                            classification=diag_union,
-                            explanation=f"Engine {eng_name} yielded {union_res.runtime_verdict.value} for SCHEMA_UNION while static rules predicted {report.metadata_verdict.value}.",
-                            remediation_advice="Reconcile multi-partition schema divergence across partition files.",
-                        )
+                if row_budget.is_exhausted:
+                    budget_res = EngineProbeResult(
+                        engine_name=eng_name,
+                        engine_version=adapter.version(),
+                        operation=EngineProbeOperation.SCHEMA_UNION,
+                        runtime_verdict=RuntimeVerdict.NOT_RUN,
+                        duration_ms=0.0,
+                        error_category="ROW_BUDGET_EXHAUSTED",
+                        error_message=f"Row probe budget exhausted ({row_budget.consumed_rows}/{row_budget.max_total_rows} rows consumed).",
+                        tested_invariants=[],
+                        details={
+                            "budget_exhausted": True,
+                            "max_total_rows": row_budget.max_total_rows,
+                            "consumed_rows": row_budget.consumed_rows,
+                        },
                     )
+                    report.engine_results.append(budget_res)
+                    all_runtime_verdicts.append(budget_res.runtime_verdict)
+                    report.limitations.append(
+                        f"Engine probe for {eng_name} SCHEMA_UNION was NOT_RUN due to aggregate row budget exhaustion."
+                    )
+                else:
+                    effective_limit = row_budget.allocate(validated_row_limit)
+                    union_res = adapter.probe_schema_union(resolved_files, row_limit=effective_limit)
+                    rows_sampled = union_res.details.get("rows_sampled", effective_limit)
+                    row_budget.record_consumed(rows_sampled)
+                    report.engine_results.append(union_res)
+                    all_runtime_verdicts.append(union_res.runtime_verdict)
+                    report.tested_invariants.extend(union_res.tested_invariants)
+                    if union_res.details.get("coverage_complete") is False:
+                        report.coverage_complete = False
+                        report.coverage_limitations.extend(union_res.details.get("coverage_limitations", []))
+                    if EngineProbeOperation.SCHEMA_UNION not in executed_ops:
+                        executed_ops.append(EngineProbeOperation.SCHEMA_UNION)
+
+                    diag_union = classify_disagreement(report.metadata_verdict, union_res.runtime_verdict)
+                    if (
+                        diag_union != DisagreementClassification.AGREEMENT
+                        and diag_union != DisagreementClassification.INCONCLUSIVE
+                    ):
+                        report.disagreements.append(
+                            RuleVsRuntimeDisagreement(
+                                engine_name=eng_name,
+                                operation=EngineProbeOperation.SCHEMA_UNION,
+                                rule_predicted_verdict=report.metadata_verdict,
+                                runtime_verdict=union_res.runtime_verdict,
+                                classification=diag_union,
+                                explanation=f"Engine {eng_name} yielded {union_res.runtime_verdict.value} for SCHEMA_UNION while static rules predicted {report.metadata_verdict.value}.",
+                                remediation_advice="Reconcile multi-partition schema divergence across partition files.",
+                            )
+                        )
             else:
                 # Single file union cannot verify multi-file partition union
                 union_inconc = EngineProbeResult(
@@ -346,31 +418,56 @@ def verify_engine_compatibility(
         # Execute CAST probe
         if EngineProbeOperation.CAST in probed_operations:
             if target_field_types:
-                cast_res = adapter.probe_cast(
-                    resolved_files[0], target_field_types, row_limit=validated_row_limit
-                )
-                report.engine_results.append(cast_res)
-                all_runtime_verdicts.append(cast_res.runtime_verdict)
-                report.tested_invariants.extend(cast_res.tested_invariants)
-                if EngineProbeOperation.CAST not in executed_ops:
-                    executed_ops.append(EngineProbeOperation.CAST)
-
-                diag_cast = classify_disagreement(report.metadata_verdict, cast_res.runtime_verdict)
-                if (
-                    diag_cast != DisagreementClassification.AGREEMENT
-                    and diag_cast != DisagreementClassification.INCONCLUSIVE
-                ):
-                    report.disagreements.append(
-                        RuleVsRuntimeDisagreement(
-                            engine_name=eng_name,
-                            operation=EngineProbeOperation.CAST,
-                            rule_predicted_verdict=report.metadata_verdict,
-                            runtime_verdict=cast_res.runtime_verdict,
-                            classification=diag_cast,
-                            explanation=f"Engine {eng_name} yielded {cast_res.runtime_verdict.value} for CAST while static rules predicted {report.metadata_verdict.value}.",
-                            remediation_advice="Review type casting constraints or nullability in target schema.",
-                        )
+                if row_budget.is_exhausted:
+                    budget_res = EngineProbeResult(
+                        engine_name=eng_name,
+                        engine_version=adapter.version(),
+                        operation=EngineProbeOperation.CAST,
+                        runtime_verdict=RuntimeVerdict.NOT_RUN,
+                        duration_ms=0.0,
+                        error_category="ROW_BUDGET_EXHAUSTED",
+                        error_message=f"Row probe budget exhausted ({row_budget.consumed_rows}/{row_budget.max_total_rows} rows consumed).",
+                        tested_invariants=[],
+                        details={
+                            "budget_exhausted": True,
+                            "max_total_rows": row_budget.max_total_rows,
+                            "consumed_rows": row_budget.consumed_rows,
+                        },
                     )
+                    report.engine_results.append(budget_res)
+                    all_runtime_verdicts.append(budget_res.runtime_verdict)
+                    report.limitations.append(
+                        f"Engine probe for {eng_name} CAST was NOT_RUN due to aggregate row budget exhaustion."
+                    )
+                else:
+                    effective_limit = row_budget.allocate(validated_row_limit)
+                    cast_res = adapter.probe_cast(
+                        resolved_files[0], target_field_types, row_limit=effective_limit
+                    )
+                    rows_sampled = cast_res.details.get("rows_sampled", effective_limit)
+                    row_budget.record_consumed(rows_sampled)
+                    report.engine_results.append(cast_res)
+                    all_runtime_verdicts.append(cast_res.runtime_verdict)
+                    report.tested_invariants.extend(cast_res.tested_invariants)
+                    if EngineProbeOperation.CAST not in executed_ops:
+                        executed_ops.append(EngineProbeOperation.CAST)
+
+                    diag_cast = classify_disagreement(report.metadata_verdict, cast_res.runtime_verdict)
+                    if (
+                        diag_cast != DisagreementClassification.AGREEMENT
+                        and diag_cast != DisagreementClassification.INCONCLUSIVE
+                    ):
+                        report.disagreements.append(
+                            RuleVsRuntimeDisagreement(
+                                engine_name=eng_name,
+                                operation=EngineProbeOperation.CAST,
+                                rule_predicted_verdict=report.metadata_verdict,
+                                runtime_verdict=cast_res.runtime_verdict,
+                                classification=diag_cast,
+                                explanation=f"Engine {eng_name} yielded {cast_res.runtime_verdict.value} for CAST while static rules predicted {report.metadata_verdict.value}.",
+                                remediation_advice="Review type casting constraints or nullability in target schema.",
+                            )
+                        )
             else:
                 # CAST requested without contract types
                 cast_inconc = EngineProbeResult(
@@ -406,16 +503,22 @@ def verify_engine_compatibility(
     else:
         report.runtime_verdict = RuntimeVerdict.INCONCLUSIVE
 
-    # De-duplicate invariants
-    report.tested_invariants = sorted(list(set(report.tested_invariants)))
+    report.total_rows_budget = validated_total_budget
+    report.total_rows_probed = row_budget.consumed_rows
+    if report.coverage_limitations:
+        report.limitations.extend(report.coverage_limitations)
+        report.coverage_limitations = sorted(list(set(report.coverage_limitations)))
 
-    return report
+    # De-duplicate invariants and limitations
+    report.tested_invariants = sorted(list(set(report.tested_invariants)))
+    report.limitations = sorted(list(set(report.limitations)))
 
     return report
 
 
 def format_engine_verification_terminal(report: EngineVerificationReport) -> str:
     """Format an EngineVerificationReport for human-readable terminal output."""
+    budget_info = f" (Budget: {report.total_rows_budget})" if report.total_rows_budget is not None else ""
     lines = [
         "=" * 70,
         " ENGINE RUNTIME VERIFICATION REPORT",
@@ -424,6 +527,8 @@ def format_engine_verification_terminal(report: EngineVerificationReport) -> str
         f" Validation Scope  : {report.validation_scope.value}",
         f" Metadata Verdict  : {report.metadata_verdict.value}",
         f" Runtime Verdict   : {report.runtime_verdict.value}",
+        f" Coverage Complete : {'YES' if report.coverage_complete else 'NO'}",
+        f" Row Probes Total  : {report.total_rows_probed}{budget_info}",
         f" Overall Outcome   : {'COMPATIBLE' if report.overall_compatible else 'POTENTIAL INCOMPATIBILITY'}",
         "-" * 70,
         f" {'Engine':<12} | {'Operation':<14} | {'Verdict':<10} | {'Latency':<8} | {'Error'}",
@@ -435,6 +540,12 @@ def format_engine_verification_terminal(report: EngineVerificationReport) -> str
             f" {r.engine_name:<12} | {r.operation.value:<14} | {r.runtime_verdict.value:<10} | {r.duration_ms:6.2f}ms | {err}"
         )
     lines.append("=" * 70)
+
+    if report.coverage_limitations:
+        lines.append("\n PARTITION COVERAGE LIMITATIONS:")
+        for lim in report.coverage_limitations:
+            lines.append(f" - {lim}")
+        lines.append("=" * 70)
 
     if report.disagreements:
         lines.append("\n RULE VS RUNTIME DISAGREEMENTS:")
@@ -461,6 +572,8 @@ def format_engine_verification_markdown(report: EngineVerificationReport) -> str
         f"- **Validation Scope**: `{report.validation_scope.value}`",
         f"- **Metadata Verdict**: `{report.metadata_verdict.value}`",
         f"- **Runtime Verdict**: `{report.runtime_verdict.value}`",
+        f"- **Coverage Complete**: `{'YES' if report.coverage_complete else 'NO'}`",
+        f"- **Total Rows Probed**: `{report.total_rows_probed}`",
         f"- **Overall Compatible**: `{'YES' if report.overall_compatible else 'NO'}`",
         "",
         "### Engine Probe Matrix",
@@ -476,6 +589,13 @@ def format_engine_verification_markdown(report: EngineVerificationReport) -> str
             f"| `{r.engine_name}` | `{r.engine_version or 'N/A'}` | `{r.operation.value}` | "
             f"{status_icon} | {r.duration_ms:.2f}ms | {r.error_category or 'OK'} |"
         )
+
+    if report.coverage_limitations:
+        lines.append("")
+        lines.append("### ⚠️ Partition Coverage Limitations")
+        lines.append("")
+        for lim in report.coverage_limitations:
+            lines.append(f"- {lim}")
 
     if report.disagreements:
         lines.append("")

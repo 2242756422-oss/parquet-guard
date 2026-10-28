@@ -1136,6 +1136,12 @@ def init_consumer_cmd(
     help="Row sample limit for engine execution probes.",
 )
 @click.option(
+    "--max-total-rows",
+    default=None,
+    type=int,
+    help="Maximum aggregate row budget across all engines and operations.",
+)
+@click.option(
     "--allow-row-probe/--no-allow-row-probe",
     default=False,
     show_default=True,
@@ -1150,6 +1156,7 @@ def verify_engine_cmd(
     out_file: Optional[str],
     fail_on_disagreement: bool,
     row_limit: int,
+    max_total_rows: Optional[int],
     allow_row_probe: bool,
 ) -> None:
     """Probe and verify runtime query engine compatibility (PyArrow, DuckDB, Polars)."""
@@ -1182,6 +1189,7 @@ def verify_engine_cmd(
             engines=eng_list,
             operations=ops,
             row_limit=row_limit,
+            max_total_rows=max_total_rows,
             allow_row_probe=allow_row_probe,
         )
 

@@ -103,6 +103,10 @@ class EngineVerificationReport(BaseModel):
     skipped_engines: List[str] = Field(default_factory=list)
     requested_operations: List[EngineProbeOperation] = Field(default_factory=list)
     executed_operations: List[EngineProbeOperation] = Field(default_factory=list)
+    coverage_complete: bool = True
+    coverage_limitations: List[str] = Field(default_factory=list)
+    total_rows_budget: Optional[int] = None
+    total_rows_probed: int = 0
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -132,5 +136,7 @@ class EngineVerificationReport(BaseModel):
         if self.skipped_engines:
             return False
         if self.runtime_verdict != RuntimeVerdict.PASS:
+            return False
+        if not self.coverage_complete:
             return False
         return not self.has_rule_optimistic_disagreement
