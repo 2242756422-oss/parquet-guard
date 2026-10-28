@@ -9,7 +9,7 @@ import pyarrow as pa
 import pyarrow.dataset as ds
 import pyarrow.parquet as pq
 
-from parquet_guard.verification.adapters import BaseEngineAdapter
+from parquet_guard.verification.adapters import BaseEngineAdapter, validate_row_limit
 from parquet_guard.verification.models import (
     EngineProbeOperation,
     EngineProbeResult,
@@ -46,6 +46,7 @@ class PyArrowEngineAdapter(BaseEngineAdapter):
                 error_message="No file paths provided to PyArrow probe_read.",
             )
 
+        row_limit = validate_row_limit(row_limit)
         start_time = time.perf_counter()
         invariants = ["file_readable", "columns_projectable"]
         try:
@@ -112,6 +113,7 @@ class PyArrowEngineAdapter(BaseEngineAdapter):
         target_field_types: Dict[str, str],
         row_limit: int = 10,
     ) -> EngineProbeResult:
+        row_limit = validate_row_limit(row_limit)
         start_time = time.perf_counter()
         invariants = ["safe_cast_supported", "no_precision_loss"]
         try:
@@ -200,6 +202,7 @@ class PyArrowEngineAdapter(BaseEngineAdapter):
                 details={"notice": "Single file provided; schema union inconclusive."},
             )
 
+        row_limit = validate_row_limit(row_limit)
         start_time = time.perf_counter()
         invariants = ["dataset_schema_unification", "multi_partition_read"]
         try:

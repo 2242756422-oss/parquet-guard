@@ -129,6 +129,8 @@ class EngineVerificationReport(BaseModel):
         )
         if has_failure:
             return False
+        if self.skipped_engines:
+            return False
         if self.runtime_verdict != RuntimeVerdict.PASS:
             return False
         return not self.has_rule_optimistic_disagreement

@@ -9,6 +9,7 @@ from parquet_guard.verification.adapters import (
     BaseEngineAdapter,
     quote_column_path,
     quote_sql_identifier,
+    validate_row_limit,
 )
 from parquet_guard.verification.models import (
     EngineProbeOperation,
@@ -59,6 +60,7 @@ class DuckDBEngineAdapter(BaseEngineAdapter):
                 error_message="No file paths provided to DuckDB probe_read.",
             )
 
+        row_limit = validate_row_limit(row_limit)
         start_time = time.perf_counter()
         invariants = ["duckdb_read_parquet", "column_projection"]
         executed_sql = None
@@ -114,6 +116,7 @@ class DuckDBEngineAdapter(BaseEngineAdapter):
         if not self.is_available():
             return self.make_unsupported_result(EngineProbeOperation.CAST)
 
+        row_limit = validate_row_limit(row_limit)
         start_time = time.perf_counter()
         invariants = ["duckdb_cast_conversion"]
         executed_sql = None
@@ -232,6 +235,7 @@ class DuckDBEngineAdapter(BaseEngineAdapter):
                 details={"notice": "Single file provided; schema union inconclusive."},
             )
 
+        row_limit = validate_row_limit(row_limit)
         start_time = time.perf_counter()
         invariants = ["duckdb_union_by_name", "partition_schema_reconciliation"]
         executed_sql = None

@@ -16,7 +16,6 @@ from parquet_guard.verification import (
     PolarsEngineAdapter,
     PyArrowEngineAdapter,
     RuntimeVerdict,
-    ValidationScope,
     classify_disagreement,
     format_engine_verification_json,
     format_engine_verification_markdown,
@@ -159,7 +158,7 @@ def test_verify_engine_compatibility_runner(sample_parquet: Path) -> None:
         expected_contract=contract,
         engines=["pyarrow", "duckdb", "polars"],
         operations=[EngineProbeOperation.READ, EngineProbeOperation.CAST],
-        scope=ValidationScope.SYNTHETIC_DATA,
+        allow_row_probe=True,
     )
     assert report.overall_compatible is True
     assert report.metadata_verdict == MetadataVerdict.COMPATIBLE

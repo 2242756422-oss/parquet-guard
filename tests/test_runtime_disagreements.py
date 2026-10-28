@@ -50,6 +50,7 @@ def test_corpus_case_engine_verification(case: dict) -> None:
             expected_contract=contract,
             engines=["pyarrow", "duckdb", "polars"],
             operations=[EngineProbeOperation.SCHEMA_UNION],
+            allow_row_probe=True,
         )
     elif op == EngineProbeOperation.CAST:
         report = verify_engine_compatibility(
@@ -57,6 +58,7 @@ def test_corpus_case_engine_verification(case: dict) -> None:
             expected_contract=contract,
             engines=["pyarrow", "duckdb", "polars"],
             operations=[EngineProbeOperation.CAST],
+            allow_row_probe=True,
         )
     else:  # READ
         report = verify_engine_compatibility(
@@ -64,6 +66,7 @@ def test_corpus_case_engine_verification(case: dict) -> None:
             expected_contract=contract,
             engines=["pyarrow", "duckdb", "polars"],
             operations=[EngineProbeOperation.READ],
+            allow_row_probe=True,
         )
 
     # 1. Assert metadata verdict matches expected

@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from typing import Any, Dict, List, Optional
 
-from parquet_guard.verification.adapters import BaseEngineAdapter
+from parquet_guard.verification.adapters import BaseEngineAdapter, validate_row_limit
 from parquet_guard.verification.models import (
     EngineProbeOperation,
     EngineProbeResult,
@@ -55,6 +55,7 @@ class PolarsEngineAdapter(BaseEngineAdapter):
                 error_message="No file paths provided to Polars probe_read.",
             )
 
+        row_limit = validate_row_limit(row_limit)
         start_time = time.perf_counter()
         invariants = ["polars_scan_parquet", "column_projection"]
         try:
@@ -110,6 +111,7 @@ class PolarsEngineAdapter(BaseEngineAdapter):
         if not self.is_available():
             return self.make_unsupported_result(EngineProbeOperation.CAST)
 
+        row_limit = validate_row_limit(row_limit)
         start_time = time.perf_counter()
         invariants = ["polars_strict_cast"]
         try:
@@ -183,6 +185,7 @@ class PolarsEngineAdapter(BaseEngineAdapter):
                 details={"notice": "Single file provided; schema union inconclusive."},
             )
 
+        row_limit = validate_row_limit(row_limit)
         start_time = time.perf_counter()
         invariants = ["polars_multi_file_union", "partition_schema_alignment"]
         try:

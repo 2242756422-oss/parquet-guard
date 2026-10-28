@@ -150,7 +150,7 @@ def test_engine_verification_handles_truncated_file(tmp_path: Path) -> None:
     bad_file = tmp_path / "truncated.parquet"
     bad_file.write_bytes(b"PAR1")  # Only 4 bytes magic, no footer
 
-    rep = verify_engine_compatibility(bad_file, engines=["pyarrow", "duckdb", "polars"])
+    rep = verify_engine_compatibility(bad_file, engines=["pyarrow", "duckdb", "polars"], allow_row_probe=True)
     assert rep.runtime_verdict == RuntimeVerdict.FAIL
     assert rep.metadata_verdict in (MetadataVerdict.ERROR, MetadataVerdict.INCOMPATIBLE)
 
@@ -159,7 +159,7 @@ def test_engine_verification_handles_random_garbage_file(tmp_path: Path) -> None
     bad_file = tmp_path / "garbage.parquet"
     bad_file.write_bytes(os.urandom(1024))
 
-    rep = verify_engine_compatibility(bad_file, engines=["pyarrow", "duckdb", "polars"])
+    rep = verify_engine_compatibility(bad_file, engines=["pyarrow", "duckdb", "polars"], allow_row_probe=True)
     assert rep.runtime_verdict == RuntimeVerdict.FAIL
 
 

@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Sequence, Union
 
 from parquet_guard.core.inspector import inspect_schema
 from parquet_guard.core.models import SchemaContract
-from parquet_guard.verification.adapters import BaseEngineAdapter
+from parquet_guard.verification.adapters import BaseEngineAdapter, validate_row_limit
 from parquet_guard.verification.duckdb_engine import DuckDBEngineAdapter
 from parquet_guard.verification.models import (
     DisagreementClassification,
@@ -103,6 +103,7 @@ def verify_engine_compatibility(
     *,
     files: Optional[Union[str, Path, Sequence[Union[str, Path]]]] = None,
     contract: Optional[SchemaContract] = None,
+    allow_row_probe: bool = False,
 ) -> EngineVerificationReport:
     """Execute real query engine verification probes across PyArrow, DuckDB, and Polars.
 
@@ -120,9 +121,14 @@ def verify_engine_compatibility(
         str(raw_target) if not isinstance(raw_target, (list, tuple)) else f"{len(raw_target)} files"
     )
 
+    # Validate row_limit before accessing data
+    validated_row_limit = validate_row_limit(row_limit)
+
     report = EngineVerificationReport(
         target_path=target_display,
-        validation_scope=scope,
+        validation_scope=ValidationScope.USER_AUTHORIZED_DATA
+        if allow_row_probe
+        else ValidationScope.METADATA_ONLY,
         engine_results=[],
         disagreements=[],
         finding_ids=[],
@@ -190,26 +196,57 @@ def verify_engine_compatibility(
             report.metadata_verdict = MetadataVerdict.ERROR
             report.limitations.append(f"Inspection of target file failed: {exc}")
 
-    # 2. Select target engines
-    selected_engines = engines or ["pyarrow", "duckdb", "polars"]
-    probed_operations = (
-        operations
-        if operations is not None
-        else [
-            EngineProbeOperation.READ,
-            EngineProbeOperation.SCHEMA_UNION if len(resolved_files) > 1 else EngineProbeOperation.CAST,
-        ]
-    )
+    # 2. Authorization Capability Gate:
+    # If operator has not authorized row data access, skip all row-level probes immediately
+    if not allow_row_probe:
+        report.limitations.append(
+            "Row-level engine execution probes were skipped because allow_row_probe=False. "
+            "Explicit authorization is required to read row data."
+        )
+        report.runtime_verdict = RuntimeVerdict.NOT_RUN
+        report.requested_engines = list(engines) if engines is not None else ["pyarrow", "duckdb", "polars"]
+        report.requested_operations = (
+            list(operations) if operations is not None else [EngineProbeOperation.READ]
+        )
+        report.executed_engines = []
+        report.skipped_engines = list(report.requested_engines)
+        report.executed_operations = []
+        return report
+
+    # 3. Select target engines
+    if engines is None:
+        selected_engines = ["pyarrow", "duckdb", "polars"]
+    else:
+        selected_engines = list(engines)
+
+    if operations is None:
+        probed_operations = [EngineProbeOperation.READ]
+        if len(resolved_files) > 1:
+            probed_operations.append(EngineProbeOperation.SCHEMA_UNION)
+        elif target_field_types:
+            probed_operations.append(EngineProbeOperation.CAST)
+    else:
+        probed_operations = list(operations)
 
     report.requested_engines = list(selected_engines)
     report.requested_operations = list(probed_operations)
+
+    if not selected_engines:
+        report.runtime_verdict = RuntimeVerdict.NOT_RUN
+        report.limitations.append("Explicitly empty engines list provided; no engine probes requested.")
+        return report
+
+    if not probed_operations:
+        report.runtime_verdict = RuntimeVerdict.NOT_RUN
+        report.limitations.append("Explicitly empty operations list provided; no operations executed.")
+        return report
 
     all_runtime_verdicts = []
     executed_engines: List[str] = []
     skipped_engines: List[str] = []
     executed_ops: List[EngineProbeOperation] = []
 
-    # 3. Execute Engine Probes
+    # 4. Execute Engine Probes
     for eng_name in selected_engines:
         adapter = get_engine_adapter(eng_name)
         if adapter is None or not adapter.is_available():
@@ -221,7 +258,7 @@ def verify_engine_compatibility(
                     engine_name=eng_name,
                     operation=EngineProbeOperation.READ,
                     runtime_verdict=RuntimeVerdict.UNSUPPORTED,
-                    error_message=f"Unknown engine '{eng_name}'.",
+                    error_message=f"Unknown or unavailable engine '{eng_name}'.",
                 )
             )
             report.engine_results.append(res)
@@ -232,7 +269,9 @@ def verify_engine_compatibility(
 
         # Execute READ probe
         if EngineProbeOperation.READ in probed_operations:
-            read_res = adapter.probe_read(resolved_files, expected_columns=expected_cols, row_limit=row_limit)
+            read_res = adapter.probe_read(
+                resolved_files, expected_columns=expected_cols, row_limit=validated_row_limit
+            )
             report.engine_results.append(read_res)
             all_runtime_verdicts.append(read_res.runtime_verdict)
             report.tested_invariants.extend(read_res.tested_invariants)
@@ -267,81 +306,110 @@ def verify_engine_compatibility(
                     )
                 )
 
-        # Execute SCHEMA_UNION probe if multiple files
-        if EngineProbeOperation.SCHEMA_UNION in probed_operations and len(resolved_files) > 1:
-            union_res = adapter.probe_schema_union(resolved_files, row_limit=row_limit)
-            report.engine_results.append(union_res)
-            all_runtime_verdicts.append(union_res.runtime_verdict)
-            report.tested_invariants.extend(union_res.tested_invariants)
-            if EngineProbeOperation.SCHEMA_UNION not in executed_ops:
-                executed_ops.append(EngineProbeOperation.SCHEMA_UNION)
+        # Execute SCHEMA_UNION probe
+        if EngineProbeOperation.SCHEMA_UNION in probed_operations:
+            if len(resolved_files) > 1:
+                union_res = adapter.probe_schema_union(resolved_files, row_limit=validated_row_limit)
+                report.engine_results.append(union_res)
+                all_runtime_verdicts.append(union_res.runtime_verdict)
+                report.tested_invariants.extend(union_res.tested_invariants)
+                if EngineProbeOperation.SCHEMA_UNION not in executed_ops:
+                    executed_ops.append(EngineProbeOperation.SCHEMA_UNION)
 
-            diag_union = classify_disagreement(report.metadata_verdict, union_res.runtime_verdict)
-            if (
-                diag_union != DisagreementClassification.AGREEMENT
-                and diag_union != DisagreementClassification.INCONCLUSIVE
-            ):
-                report.disagreements.append(
-                    RuleVsRuntimeDisagreement(
-                        engine_name=eng_name,
-                        operation=EngineProbeOperation.SCHEMA_UNION,
-                        rule_predicted_verdict=report.metadata_verdict,
-                        runtime_verdict=union_res.runtime_verdict,
-                        classification=diag_union,
-                        explanation=f"Engine {eng_name} yielded {union_res.runtime_verdict.value} for SCHEMA_UNION while static rules predicted {report.metadata_verdict.value}.",
-                        remediation_advice="Reconcile multi-partition schema divergence across partition files.",
+                diag_union = classify_disagreement(report.metadata_verdict, union_res.runtime_verdict)
+                if (
+                    diag_union != DisagreementClassification.AGREEMENT
+                    and diag_union != DisagreementClassification.INCONCLUSIVE
+                ):
+                    report.disagreements.append(
+                        RuleVsRuntimeDisagreement(
+                            engine_name=eng_name,
+                            operation=EngineProbeOperation.SCHEMA_UNION,
+                            rule_predicted_verdict=report.metadata_verdict,
+                            runtime_verdict=union_res.runtime_verdict,
+                            classification=diag_union,
+                            explanation=f"Engine {eng_name} yielded {union_res.runtime_verdict.value} for SCHEMA_UNION while static rules predicted {report.metadata_verdict.value}.",
+                            remediation_advice="Reconcile multi-partition schema divergence across partition files.",
+                        )
                     )
+            else:
+                # Single file union cannot verify multi-file partition union
+                union_inconc = EngineProbeResult(
+                    engine_name=eng_name,
+                    operation=EngineProbeOperation.SCHEMA_UNION,
+                    runtime_verdict=RuntimeVerdict.INCONCLUSIVE,
+                    error_message="SCHEMA_UNION probe requested but only a single file provided (minimum 2 files required for union).",
                 )
+                report.engine_results.append(union_inconc)
+                all_runtime_verdicts.append(union_inconc.runtime_verdict)
 
-        # Execute CAST probe if target types specified
-        if EngineProbeOperation.CAST in probed_operations and target_field_types:
-            cast_res = adapter.probe_cast(resolved_files[0], target_field_types, row_limit=row_limit)
-            report.engine_results.append(cast_res)
-            all_runtime_verdicts.append(cast_res.runtime_verdict)
-            report.tested_invariants.extend(cast_res.tested_invariants)
-            if EngineProbeOperation.CAST not in executed_ops:
-                executed_ops.append(EngineProbeOperation.CAST)
+        # Execute CAST probe
+        if EngineProbeOperation.CAST in probed_operations:
+            if target_field_types:
+                cast_res = adapter.probe_cast(
+                    resolved_files[0], target_field_types, row_limit=validated_row_limit
+                )
+                report.engine_results.append(cast_res)
+                all_runtime_verdicts.append(cast_res.runtime_verdict)
+                report.tested_invariants.extend(cast_res.tested_invariants)
+                if EngineProbeOperation.CAST not in executed_ops:
+                    executed_ops.append(EngineProbeOperation.CAST)
 
-            diag_cast = classify_disagreement(report.metadata_verdict, cast_res.runtime_verdict)
-            if (
-                diag_cast != DisagreementClassification.AGREEMENT
-                and diag_cast != DisagreementClassification.INCONCLUSIVE
-            ):
-                report.disagreements.append(
-                    RuleVsRuntimeDisagreement(
-                        engine_name=eng_name,
-                        operation=EngineProbeOperation.CAST,
-                        rule_predicted_verdict=report.metadata_verdict,
-                        runtime_verdict=cast_res.runtime_verdict,
-                        classification=diag_cast,
-                        explanation=f"Engine {eng_name} yielded {cast_res.runtime_verdict.value} for CAST while static rules predicted {report.metadata_verdict.value}.",
-                        remediation_advice="Review type casting constraints or nullability in target schema.",
+                diag_cast = classify_disagreement(report.metadata_verdict, cast_res.runtime_verdict)
+                if (
+                    diag_cast != DisagreementClassification.AGREEMENT
+                    and diag_cast != DisagreementClassification.INCONCLUSIVE
+                ):
+                    report.disagreements.append(
+                        RuleVsRuntimeDisagreement(
+                            engine_name=eng_name,
+                            operation=EngineProbeOperation.CAST,
+                            rule_predicted_verdict=report.metadata_verdict,
+                            runtime_verdict=cast_res.runtime_verdict,
+                            classification=diag_cast,
+                            explanation=f"Engine {eng_name} yielded {cast_res.runtime_verdict.value} for CAST while static rules predicted {report.metadata_verdict.value}.",
+                            remediation_advice="Review type casting constraints or nullability in target schema.",
+                        )
                     )
+            else:
+                # CAST requested without contract types
+                cast_inconc = EngineProbeResult(
+                    engine_name=eng_name,
+                    operation=EngineProbeOperation.CAST,
+                    runtime_verdict=RuntimeVerdict.INCONCLUSIVE,
+                    error_message="CAST probe requested but no target schema/contract types provided.",
                 )
+                report.engine_results.append(cast_inconc)
+                all_runtime_verdicts.append(cast_inconc.runtime_verdict)
 
     report.executed_engines = executed_engines
     report.skipped_engines = skipped_engines
     report.executed_operations = executed_ops
 
-    # 4. Synthesize Aggregate Runtime Verdict
-    executed_verdicts = [
-        v for v in all_runtime_verdicts if v not in (RuntimeVerdict.UNSUPPORTED, RuntimeVerdict.NOT_RUN)
-    ]
+    # 5. Synthesize Aggregate Runtime Verdict
     if not all_runtime_verdicts or not probed_operations:
         report.runtime_verdict = RuntimeVerdict.NOT_RUN
     elif any(v == RuntimeVerdict.FAIL for v in all_runtime_verdicts):
         report.runtime_verdict = RuntimeVerdict.FAIL
     elif any(v == RuntimeVerdict.ERROR for v in all_runtime_verdicts):
         report.runtime_verdict = RuntimeVerdict.ERROR
-    elif all(v == RuntimeVerdict.UNSUPPORTED for v in all_runtime_verdicts):
-        report.runtime_verdict = RuntimeVerdict.UNSUPPORTED
-    elif executed_verdicts and all(v == RuntimeVerdict.PASS for v in executed_verdicts):
+    elif any(v == RuntimeVerdict.INCONCLUSIVE for v in all_runtime_verdicts):
+        report.runtime_verdict = RuntimeVerdict.INCONCLUSIVE
+    elif any(v == RuntimeVerdict.UNSUPPORTED for v in all_runtime_verdicts):
+        report.runtime_verdict = (
+            RuntimeVerdict.UNSUPPORTED
+            if all(v == RuntimeVerdict.UNSUPPORTED for v in all_runtime_verdicts)
+            else RuntimeVerdict.INCONCLUSIVE
+        )
+    elif all(v == RuntimeVerdict.PASS for v in all_runtime_verdicts):
         report.runtime_verdict = RuntimeVerdict.PASS
     else:
         report.runtime_verdict = RuntimeVerdict.INCONCLUSIVE
 
     # De-duplicate invariants
     report.tested_invariants = sorted(list(set(report.tested_invariants)))
+
+    return report
 
     return report
 

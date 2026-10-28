@@ -18,13 +18,15 @@ def test_cli_verify_engine_single_file_text_and_json(tmp_path: Path) -> None:
 
     runner = CliRunner()
     # 1. Text format
-    res = runner.invoke(main, ["verify-engine", str(f), "--engine", "pyarrow"])
+    res = runner.invoke(main, ["verify-engine", str(f), "--engine", "pyarrow", "--allow-row-probe"])
     assert res.exit_code == 0
     assert "ENGINE RUNTIME VERIFICATION REPORT" in res.output
     assert "pyarrow" in res.output
 
     # 2. JSON format
-    res_json = runner.invoke(main, ["verify-engine", str(f), "--engine", "pyarrow", "--format", "json"])
+    res_json = runner.invoke(
+        main, ["verify-engine", str(f), "--engine", "pyarrow", "--allow-row-probe", "--format", "json"]
+    )
     assert res_json.exit_code == 0
     data = json.loads(res_json.output)
     assert data["runtime_verdict"] == "PASS"
@@ -52,6 +54,7 @@ def test_cli_verify_engine_with_contract_and_disagreement(tmp_path: Path) -> Non
             "--engine",
             "pyarrow",
             "--fail-on-disagreement",
+            "--allow-row-probe",
         ],
     )
     assert res.exit_code == 0
@@ -70,7 +73,7 @@ def test_cli_verify_engine_multi_file_union(tmp_path: Path) -> None:
     runner = CliRunner()
     res = runner.invoke(
         main,
-        ["verify-engine", str(dir_path), "--engine", "pyarrow", "--scope", "union"],
+        ["verify-engine", str(dir_path), "--engine", "pyarrow", "--scope", "union", "--allow-row-probe"],
     )
     assert res.exit_code == 0
     assert "pyarrow" in res.output

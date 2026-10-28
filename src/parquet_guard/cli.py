@@ -1135,6 +1135,12 @@ def init_consumer_cmd(
     type=int,
     help="Row sample limit for engine execution probes.",
 )
+@click.option(
+    "--allow-row-probe/--no-allow-row-probe",
+    default=False,
+    show_default=True,
+    help="Explicitly authorize engines to probe and read sample row data from disk.",
+)
 def verify_engine_cmd(
     target_path: str,
     contract_path: Optional[str],
@@ -1144,6 +1150,7 @@ def verify_engine_cmd(
     out_file: Optional[str],
     fail_on_disagreement: bool,
     row_limit: int,
+    allow_row_probe: bool,
 ) -> None:
     """Probe and verify runtime query engine compatibility (PyArrow, DuckDB, Polars)."""
     try:
@@ -1175,6 +1182,7 @@ def verify_engine_cmd(
             engines=eng_list,
             operations=ops,
             row_limit=row_limit,
+            allow_row_probe=allow_row_probe,
         )
 
         if fmt == "json":

@@ -71,6 +71,7 @@ def test_qa01_unsupported_engine_does_not_yield_vacuous_pass(sample_parquet: Pat
         target=sample_parquet,
         engines=["nonexistent_engine_xyz"],
         operations=[EngineProbeOperation.READ],
+        allow_row_probe=True,
     )
     assert report.runtime_verdict != RuntimeVerdict.PASS
     assert report.runtime_verdict in (RuntimeVerdict.UNSUPPORTED, RuntimeVerdict.INCONCLUSIVE)
@@ -287,7 +288,9 @@ def test_qa04_cli_verify_engine_exit_code_contract(sample_parquet: Path, tmp_pat
     runner = CliRunner()
 
     # 1. Compatible case -> Exit 0
-    res_ok = runner.invoke(main, ["verify-engine", str(sample_parquet), "-e", "pyarrow", "-s", "read"])
+    res_ok = runner.invoke(
+        main, ["verify-engine", str(sample_parquet), "-e", "pyarrow", "-s", "read", "--allow-row-probe"]
+    )
     assert res_ok.exit_code == 0
 
     # 2. Incompatible contract -> Exit 1
@@ -297,7 +300,15 @@ def test_qa04_cli_verify_engine_exit_code_contract(sample_parquet: Path, tmp_pat
 
     res_fail = runner.invoke(
         main,
-        ["verify-engine", str(sample_parquet), "-c", str(bad_contract_path), "-e", "pyarrow"],
+        [
+            "verify-engine",
+            str(sample_parquet),
+            "-c",
+            str(bad_contract_path),
+            "-e",
+            "pyarrow",
+            "--allow-row-probe",
+        ],
     )
     assert res_fail.exit_code == 1
 
@@ -389,6 +400,7 @@ def test_qa13_cast_disagreement_recorded(sample_parquet: Path, monkeypatch: pyte
         expected_contract=contract,
         engines=["pyarrow"],
         operations=[EngineProbeOperation.CAST],
+        allow_row_probe=True,
     )
     assert report.metadata_verdict == MetadataVerdict.COMPATIBLE
     assert report.runtime_verdict == RuntimeVerdict.FAIL

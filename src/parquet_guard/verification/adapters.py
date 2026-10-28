@@ -4,13 +4,24 @@ from __future__ import annotations
 
 import re
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from parquet_guard.verification.models import (
     EngineProbeOperation,
     EngineProbeResult,
     RuntimeVerdict,
 )
+
+
+def validate_row_limit(row_limit: Any, min_val: int = 1, max_val: int = 10_000) -> int:
+    """Validate that row_limit is a positive integer within bounds [min_val, max_val]."""
+    if isinstance(row_limit, bool) or not isinstance(row_limit, int):
+        raise ValueError(f"row_limit must be an integer, got {type(row_limit).__name__}: {row_limit!r}")
+    if row_limit < min_val:
+        raise ValueError(f"row_limit must be >= {min_val}, got {row_limit}")
+    if row_limit > max_val:
+        raise ValueError(f"row_limit exceeds maximum allowed limit of {max_val}, got {row_limit}")
+    return row_limit
 
 
 def quote_sql_identifier(identifier: str) -> str:

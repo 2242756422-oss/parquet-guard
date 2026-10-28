@@ -4,6 +4,7 @@ from parquet_guard.verification.adapters import (
     BaseEngineAdapter,
     quote_sql_identifier,
     sanitize_error_message,
+    validate_row_limit,
 )
 from parquet_guard.verification.duckdb_engine import DuckDBEngineAdapter
 from parquet_guard.verification.models import (
@@ -33,6 +34,7 @@ __all__ = [
     "BaseEngineAdapter",
     "quote_sql_identifier",
     "sanitize_error_message",
+    "validate_row_limit",
     "PyArrowEngineAdapter",
     "DuckDBEngineAdapter",
     "PolarsEngineAdapter",

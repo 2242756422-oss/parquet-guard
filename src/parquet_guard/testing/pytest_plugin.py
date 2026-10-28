@@ -60,6 +60,7 @@ def assert_engine_verified(
     operations: Optional[List[EngineProbeOperation]] = None,
     fail_on_disagreement: bool = True,
     row_limit: int = 10,
+    allow_row_probe: bool = True,
 ) -> EngineVerificationReport:
     """Assert that Parquet file(s) execute successfully across target runtime query engines.
 
@@ -89,6 +90,7 @@ def assert_engine_verified(
         engines=engines,
         operations=operations,
         row_limit=row_limit,
+        allow_row_probe=allow_row_probe,
     )
 
     if not report.overall_compatible:
