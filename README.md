@@ -200,14 +200,17 @@ parquet-guard eval-ai --provider mock --split held_out
 ### 13. Empirical Query Engine Verification (`verify-engine`)
 Directly probe runtime execution across PyArrow, DuckDB, and Polars:
 ```bash
-# Probe all installed engines against a Parquet directory
+# Metadata-only verification without reading row data (default)
 parquet-guard verify-engine data/lake/ -c contracts/baseline.json
 
-# Probe specific engine with strict disagreement failure in CI
-parquet-guard verify-engine data/lake/ --engine polars --engine duckdb --fail-on-disagreement
+# Explicitly authorize bounded row-level probing across all installed engines
+parquet-guard verify-engine data/lake/ -c contracts/baseline.json --allow-row-probe --row-limit 10
+
+# Constrain aggregate row budget across engines and operations
+parquet-guard verify-engine data/lake/ --allow-row-probe --max-total-rows 100 --engine polars --engine duckdb --fail-on-disagreement
 
 # Export JSON report
-parquet-guard verify-engine data/sample.parquet --format json -o engine_report.json
+parquet-guard verify-engine data/sample.parquet --allow-row-probe --format json -o engine_report.json
 ```
 
 ### 14. Pytest Integration

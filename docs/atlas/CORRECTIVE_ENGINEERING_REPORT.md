@@ -228,9 +228,32 @@ A second, rigorous adversarial reliability pass addressed remaining subtle bound
 
 ---
 
-## 6. Release Verdict & Maintainer Recommendations
+## 7. Pre-Merge Reliability Hardening & Acceptance Verification
 
-### Verdict: READY FOR MAINTAINER REVIEW ON PR #6
+A final targeted reliability hardening pass addressed four deep semantic and resource invariants:
+1. **Python API Authorization Gate (P0):**
+   - Strictly enforced that `allow_row_probe` must be an explicit Python `bool`. Any non-boolean input (`"false"`, `"true"`, `1`, `0`, `None`, `[]`, `{}`) raises `TypeError` immediately at the API entry point before any engine calls.
+   - Spies confirmed zero row-level reads occur across PyArrow, DuckDB, and Polars on unauthorized or invalid calls.
+2. **CAST Execution Completeness Across All Engines (P1):**
+   - Eliminated silent skips (PyArrow) and fallback `SELECT *` executions (DuckDB, Polars).
+   - If any requested target column is absent from the table (all missing or partial subset), adapters fail closed with `RuntimeVerdict.FAIL` (`MISSING_TARGET_COLUMNS`).
+   - Detailed execution accounting is exposed in probe details: `requested_cast_fields`, `attempted_cast_fields`, `successful_cast_fields`, `failed_or_skipped_cast_fields`.
+   - Empty datasets explicitly distinguish schema-level castability from data-value conversions with invariant `empty_dataset_schema_cast`.
+3. **Aggregate Row-Probe Resource Budgets (P1):**
+   - Introduced invocation-scoped budget tracking via `RowProbeBudget` and `validate_total_row_budget` / `max_total_rows`.
+   - Once the shared invocation budget is exhausted, subsequent requested engine probes receive `RuntimeVerdict.NOT_RUN` (`ROW_BUDGET_EXHAUSTED`), preventing overall compatibility PASS.
+4. **Honest Multi-Partition SCHEMA_UNION Coverage (P1):**
+   - Replaced shallow single-query LIMIT execution with per-partition verification under the unified schema.
+   - Initial partitions satisfying a global LIMIT can no longer mask defects, type mismatches, or corruption in downstream partitions.
+   - Detailed partition coverage metrics are reported: `files_requested`, `files_metadata_inspected`, `files_row_probed`, `files_skipped`, `coverage_complete`, `coverage_limitations`. Partial runtime coverage cannot produce overall compatibility.
+5. **Adversarial Regression Test Suite:**
+   - Added 37 comprehensive pre-merge hardening tests in `tests/test_atlas_pr6_premerge_hardening.py`, expanding the total test suite to 288 passing tests.
+
+---
+
+## 8. Release Verdict & Maintainer Recommendations
+
+### Verdict: READY FOR HUMAN MAINTAINER REVIEW ON PR #6
 
 - **PR Branch:** `feat/project-atlas-real-world-interoperability`
 - **Base Branch:** `main`
